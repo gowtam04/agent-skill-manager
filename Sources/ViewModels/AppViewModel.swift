@@ -17,8 +17,11 @@ final class AppViewModel {
     // Editor state
     var isEditing: Bool = false
     var editorContent: String = ""
+    var editorOriginalContent: String = ""
     var editorFileModificationDate: Date?
     var isShowingExternalModificationWarning: Bool = false
+    var isShowingUnsavedChangesAlert: Bool = false
+    var pendingSkillSelection: Skill?
 
     // Add skill state
     var isShowingAddSheet: Bool = false
@@ -63,7 +66,17 @@ final class AppViewModel {
     // MARK: - Selection
 
     func selectSkill(_ skill: Skill) {
-        selectedSkill = skill
+        if isEditing {
+            if editorContent != editorOriginalContent {
+                pendingSkillSelection = skill
+                isShowingUnsavedChangesAlert = true
+            } else {
+                selectedSkill = skill
+                startEditing()
+            }
+        } else {
+            selectedSkill = skill
+        }
     }
 
     // MARK: - Search
@@ -172,7 +185,9 @@ final class AppViewModel {
     func startEditing() {
         guard let skill = selectedSkill else { return }
         do {
-            editorContent = try skillManager.readSkillContent(skill)
+            let content = try skillManager.readSkillContent(skill)
+            editorContent = content
+            editorOriginalContent = content
             let filePath = skill.directoryURL.appendingPathComponent("SKILL.md").path
             let attrs = try FileManager.default.attributesOfItem(atPath: filePath)
             editorFileModificationDate = attrs[.modificationDate] as? Date
@@ -218,6 +233,29 @@ final class AppViewModel {
     func cancelEditing() {
         isEditing = false
         editorContent = ""
+        editorOriginalContent = ""
         editorFileModificationDate = nil
+    }
+
+    // MARK: - Unsaved Changes Navigation
+
+    func saveAndNavigateToSkill() async {
+        guard let pending = pendingSkillSelection else { return }
+        await saveEditing()
+        pendingSkillSelection = nil
+        selectedSkill = pending
+        startEditing()
+    }
+
+    func discardAndNavigateToSkill() {
+        guard let pending = pendingSkillSelection else { return }
+        cancelEditing()
+        pendingSkillSelection = nil
+        selectedSkill = pending
+        startEditing()
+    }
+
+    func cancelNavigationToSkill() {
+        pendingSkillSelection = nil
     }
 }

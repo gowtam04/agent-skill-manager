@@ -41,6 +41,21 @@ struct ContentView: View {
                 Text(error)
             }
         }
+        .alert("Unsaved Changes", isPresented: $viewModel.isShowingUnsavedChangesAlert) {
+            Button("Save") {
+                Task {
+                    await viewModel.saveAndNavigateToSkill()
+                }
+            }
+            Button("Discard", role: .destructive) {
+                viewModel.discardAndNavigateToSkill()
+            }
+            Button("Cancel", role: .cancel) {
+                viewModel.cancelNavigationToSkill()
+            }
+        } message: {
+            Text("You have unsaved changes. What would you like to do?")
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task {
                 await viewModel.loadSkills()

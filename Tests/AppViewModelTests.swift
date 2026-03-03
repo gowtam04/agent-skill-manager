@@ -677,6 +677,200 @@ struct AppViewModelTests {
         #expect(!vm.isShowingDeleteConfirmation)
     }
 
+    // MARK: - Editor Navigation (Unsaved Changes)
+
+    @Test("Switching skills while editing with no changes updates editor to new skill")
+    func switchSkillWhileEditingNoChanges() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        try createSkillDirectory(named: "skill-a", in: skillsDir, content: """
+        ---
+        name: skill-a
+        description: First skill
+        ---
+        # Skill A Content
+        """)
+        try createSkillDirectory(named: "skill-b", in: skillsDir, content: """
+        ---
+        name: skill-b
+        description: Second skill
+        ---
+        # Skill B Content
+        """)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        let skillA = try #require(vm.skills.first { $0.name == "skill-a" })
+        let skillB = try #require(vm.skills.first { $0.name == "skill-b" })
+
+        vm.selectSkill(skillA)
+        vm.startEditing()
+        #expect(vm.isEditing)
+        #expect(vm.editorContent.contains("Skill A Content"))
+
+        // Switch to skill-b without modifying content
+        vm.selectSkill(skillB)
+
+        #expect(vm.selectedSkill?.name == "skill-b")
+        #expect(vm.isEditing)
+        #expect(vm.editorContent.contains("Skill B Content"))
+        #expect(!vm.isShowingUnsavedChangesAlert)
+    }
+
+    @Test("Switching skills while editing with unsaved changes shows alert")
+    func switchSkillWhileEditingUnsavedChanges() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        try createSkillDirectory(named: "skill-a", in: skillsDir)
+        try createSkillDirectory(named: "skill-b", in: skillsDir)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        let skillA = try #require(vm.skills.first { $0.name == "skill-a" })
+        let skillB = try #require(vm.skills.first { $0.name == "skill-b" })
+
+        vm.selectSkill(skillA)
+        vm.startEditing()
+        vm.editorContent = "modified content"
+
+        vm.selectSkill(skillB)
+
+        #expect(vm.isShowingUnsavedChangesAlert)
+        #expect(vm.selectedSkill?.name == "skill-a")
+        #expect(vm.pendingSkillSelection?.name == "skill-b")
+    }
+
+    @Test("saveAndNavigateToSkill saves old content and switches to new skill")
+    func saveAndNavigateToSkill() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        try createSkillDirectory(named: "skill-a", in: skillsDir)
+        try createSkillDirectory(named: "skill-b", in: skillsDir, content: """
+        ---
+        name: skill-b
+        description: Second skill
+        ---
+        # Skill B Content
+        """)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        let skillA = try #require(vm.skills.first { $0.name == "skill-a" })
+        let skillB = try #require(vm.skills.first { $0.name == "skill-b" })
+
+        vm.selectSkill(skillA)
+        vm.startEditing()
+        vm.editorContent = "saved content for skill-a"
+
+        // Trigger unsaved changes flow
+        vm.selectSkill(skillB)
+        #expect(vm.isShowingUnsavedChangesAlert)
+
+        await vm.saveAndNavigateToSkill()
+
+        // Verify old skill was saved
+        let savedContent = try String(
+            contentsOf: skillsDir
+                .appendingPathComponent("skill-a")
+                .appendingPathComponent("SKILL.md"),
+            encoding: .utf8
+        )
+        #expect(savedContent.contains("saved content for skill-a"))
+
+        // Verify navigated to new skill and editor is active
+        #expect(vm.selectedSkill?.name == "skill-b")
+        #expect(vm.isEditing)
+        #expect(vm.editorContent.contains("Skill B Content"))
+        #expect(vm.pendingSkillSelection == nil)
+    }
+
+    @Test("discardAndNavigateToSkill discards changes and switches to new skill")
+    func discardAndNavigateToSkill() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let originalContent = """
+        ---
+        name: skill-a
+        description: First skill
+        ---
+        # Original A Content
+        """
+        try createSkillDirectory(named: "skill-a", in: skillsDir, content: originalContent)
+        try createSkillDirectory(named: "skill-b", in: skillsDir, content: """
+        ---
+        name: skill-b
+        description: Second skill
+        ---
+        # Skill B Content
+        """)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        let skillA = try #require(vm.skills.first { $0.name == "skill-a" })
+        let skillB = try #require(vm.skills.first { $0.name == "skill-b" })
+
+        vm.selectSkill(skillA)
+        vm.startEditing()
+        vm.editorContent = "unsaved modifications"
+
+        vm.selectSkill(skillB)
+        #expect(vm.isShowingUnsavedChangesAlert)
+
+        vm.discardAndNavigateToSkill()
+
+        // Verify original file is unchanged (not overwritten)
+        let fileContent = try String(
+            contentsOf: skillsDir
+                .appendingPathComponent("skill-a")
+                .appendingPathComponent("SKILL.md"),
+            encoding: .utf8
+        )
+        #expect(fileContent.contains("Original A Content"))
+
+        // Verify navigated to new skill
+        #expect(vm.selectedSkill?.name == "skill-b")
+        #expect(vm.isEditing)
+        #expect(vm.editorContent.contains("Skill B Content"))
+        #expect(vm.pendingSkillSelection == nil)
+    }
+
+    @Test("cancelNavigationToSkill clears pending and stays on current skill")
+    func cancelNavigationToSkill() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        try createSkillDirectory(named: "skill-a", in: skillsDir)
+        try createSkillDirectory(named: "skill-b", in: skillsDir)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        let skillA = try #require(vm.skills.first { $0.name == "skill-a" })
+        let skillB = try #require(vm.skills.first { $0.name == "skill-b" })
+
+        vm.selectSkill(skillA)
+        vm.startEditing()
+        vm.editorContent = "my unsaved work"
+
+        vm.selectSkill(skillB)
+        #expect(vm.isShowingUnsavedChangesAlert)
+
+        vm.cancelNavigationToSkill()
+
+        #expect(vm.pendingSkillSelection == nil)
+        #expect(vm.selectedSkill?.name == "skill-a")
+        #expect(vm.isEditing)
+        #expect(vm.editorContent == "my unsaved work")
+    }
+
     // MARK: - Search updates filteredSkills but not skills
 
     @Test("Search filters filteredSkills without modifying skills array")
