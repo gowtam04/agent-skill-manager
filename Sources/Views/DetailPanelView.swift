@@ -8,9 +8,20 @@ struct DetailPanelView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     // Name
-                    Text(skill.name)
-                        .font(.largeTitle)
-                        .fontWeight(.bold)
+                    HStack(alignment: .firstTextBaseline, spacing: 8) {
+                        Text(skill.name)
+                            .font(.largeTitle)
+                            .fontWeight(.bold)
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(skill.name, forType: .string)
+                        } label: {
+                            Image(systemName: "doc.on.doc")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Copy skill name")
+                    }
 
                     Divider()
 
