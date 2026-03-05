@@ -36,14 +36,22 @@ final class AppViewModel {
     // Export state
     var isExporting: Bool = false
 
+    // Sync state
+    var isSyncing: Bool = false
+    var lastSyncDate: Date?
+    var syncConflicts: [SyncConflict] = []
+    var isShowingSyncConflictAlert: Bool = false
+
     // MARK: - Private
 
     private let skillManager: SkillManager
+    private(set) var syncManager: SyncManager?
 
     // MARK: - Init
 
-    init(skillManager: SkillManager) {
+    init(skillManager: SkillManager, syncManager: SyncManager? = nil) {
         self.skillManager = skillManager
+        self.syncManager = syncManager
     }
 
     // MARK: - Load Skills
@@ -273,5 +281,46 @@ final class AppViewModel {
 
     func cancelNavigationToSkill() {
         pendingSkillSelection = nil
+    }
+
+    // MARK: - Sync
+
+    func triggerSync() async {
+        guard let syncManager, syncManager.isSyncConfigured(), !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+
+        do {
+            let report = try await syncManager.performSync()
+            lastSyncDate = Date()
+
+            if !report.conflicts.isEmpty {
+                syncConflicts = report.conflicts
+                isShowingSyncConflictAlert = true
+            }
+
+            // Reload skills to reflect any changes from sync
+            await loadSkills()
+        } catch {
+            errorMessage = "Sync failed: \(error.localizedDescription)"
+        }
+    }
+
+    func configureSyncFolder(_ url: URL) {
+        guard var syncManager else { return }
+        syncManager.syncSettings.syncFolderURL = url
+        syncManager.syncSettings.isSyncEnabled = true
+        self.syncManager = syncManager
+    }
+
+    func disableSync() {
+        guard var syncManager else { return }
+        syncManager.syncSettings.isSyncEnabled = false
+        self.syncManager = syncManager
+    }
+
+    func dismissSyncConflicts() {
+        syncConflicts = []
+        isShowingSyncConflictAlert = false
     }
 }

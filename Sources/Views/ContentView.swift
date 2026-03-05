@@ -25,6 +25,7 @@ struct ContentView: View {
         }
         .task {
             await viewModel.loadSkills()
+            await viewModel.triggerSync()
         }
         .sheet(isPresented: $viewModel.isShowingAddSheet) {
             AddSkillView(viewModel: viewModel)
@@ -59,7 +60,27 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             Task {
                 await viewModel.loadSkills()
+                await viewModel.triggerSync()
             }
         }
+        .alert("Sync Conflicts", isPresented: $viewModel.isShowingSyncConflictAlert) {
+            Button("OK") {
+                viewModel.dismissSyncConflicts()
+            }
+        } message: {
+            Text(syncConflictMessage)
+        }
+    }
+
+    private var syncConflictMessage: String {
+        let descriptions = viewModel.syncConflicts.map { conflict in
+            switch conflict.reason {
+            case .deletedRemotelyButModifiedLocally:
+                return "\(conflict.skillName): deleted on another device but modified locally (kept local copy)"
+            case .deletedLocallyButModifiedRemotely:
+                return "\(conflict.skillName): deleted locally but modified on another device (kept remote copy)"
+            }
+        }
+        return descriptions.joined(separator: "\n")
     }
 }
