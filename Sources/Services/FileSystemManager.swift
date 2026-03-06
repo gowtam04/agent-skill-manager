@@ -125,6 +125,14 @@ struct FileSystemManager: Sendable {
         return nodes
     }
 
+    // MARK: - Existence Check
+
+    func skillExists(named name: String) -> Bool {
+        let fm = FileManager.default
+        return fm.fileExists(atPath: skillsDirectoryURL.appendingPathComponent(name).path)
+            || fm.fileExists(atPath: disabledDirectoryURL.appendingPathComponent(name).path)
+    }
+
     // MARK: - Copy
 
     func copySkill(from sourceURL: URL, to name: String) throws {

@@ -27,6 +27,12 @@ final class AppViewModel {
     var isShowingAddSheet: Bool = false
     var addSkillURL: String = ""
 
+    // Duplicate confirmation state
+    var isShowingDuplicateConfirmation: Bool = false
+    var duplicateSkillNames: [String] = []
+    private var pendingFileImportURLs: [URL] = []
+    private var pendingStagedURLInstall: StagedURLInstall?
+
     // Delete state
     var isShowingDeleteConfirmation: Bool = false
 
@@ -104,17 +110,21 @@ final class AppViewModel {
     // MARK: - Add Skill from File (FR-4)
 
     func addSkillFromFile(url: URL) async {
-        do {
-            try await skillManager.addSkillFromFile(sourceURL: url)
-            skills = skillManager.skills
-            applyFilter()
-            isShowingAddSheet = false
-        } catch {
-            errorMessage = error.localizedDescription
-        }
+        await addSkillsFromFiles(urls: [url])
     }
 
     func addSkillsFromFiles(urls: [URL]) async {
+        let duplicates = skillManager.findDuplicateNames(for: urls)
+        if duplicates.isEmpty {
+            await performFileImport(urls: urls)
+        } else {
+            pendingFileImportURLs = urls
+            duplicateSkillNames = duplicates
+            isShowingDuplicateConfirmation = true
+        }
+    }
+
+    private func performFileImport(urls: [URL]) async {
         var errors: [String] = []
         for url in urls {
             do {
@@ -136,14 +146,54 @@ final class AppViewModel {
 
     func addSkillFromURL() async {
         do {
-            try await skillManager.addSkillFromURL(repoURL: addSkillURL)
-            skills = skillManager.skills
-            applyFilter()
-            isShowingAddSheet = false
-            addSkillURL = ""
+            let staged = try await skillManager.stageSkillFromURL(repoURL: addSkillURL)
+            let duplicates = skillManager.findDuplicateSkillNames(staged.skillNames)
+            if duplicates.isEmpty {
+                try await skillManager.commitStagedURLInstall(staged)
+                skills = skillManager.skills
+                applyFilter()
+                isShowingAddSheet = false
+                addSkillURL = ""
+            } else {
+                pendingStagedURLInstall = staged
+                duplicateSkillNames = duplicates
+                isShowingDuplicateConfirmation = true
+            }
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    // MARK: - Duplicate Confirmation
+
+    func confirmOverwriteDuplicates() async {
+        if !pendingFileImportURLs.isEmpty {
+            let urls = pendingFileImportURLs
+            pendingFileImportURLs = []
+            duplicateSkillNames = []
+            await performFileImport(urls: urls)
+        } else if let staged = pendingStagedURLInstall {
+            pendingStagedURLInstall = nil
+            duplicateSkillNames = []
+            do {
+                try await skillManager.commitStagedURLInstall(staged)
+                skills = skillManager.skills
+                applyFilter()
+                isShowingAddSheet = false
+                addSkillURL = ""
+            } catch {
+                errorMessage = error.localizedDescription
+            }
+        }
+    }
+
+    func cancelOverwriteDuplicates() {
+        if let staged = pendingStagedURLInstall {
+            skillManager.cancelStagedURLInstall(staged)
+            pendingStagedURLInstall = nil
+        }
+        pendingFileImportURLs = []
+        duplicateSkillNames = []
     }
 
     // MARK: - Enable / Disable (FR-7)

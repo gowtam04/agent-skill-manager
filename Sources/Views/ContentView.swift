@@ -41,6 +41,21 @@ struct ContentView: View {
                 Text(error)
             }
         }
+        .alert("Duplicate Skills", isPresented: $viewModel.isShowingDuplicateConfirmation) {
+            Button("Overwrite", role: .destructive) {
+                Task { await viewModel.confirmOverwriteDuplicates() }
+            }
+            Button("Cancel", role: .cancel) {
+                viewModel.cancelOverwriteDuplicates()
+            }
+        } message: {
+            if viewModel.duplicateSkillNames.count == 1 {
+                Text("A skill named \"\(viewModel.duplicateSkillNames.first ?? "")\" already exists. Do you want to overwrite it?")
+            } else {
+                let names = viewModel.duplicateSkillNames.map { "\"\($0)\"" }.joined(separator: ", ")
+                Text("Skills named \(names) already exist. Do you want to overwrite them?")
+            }
+        }
         .alert("Unsaved Changes", isPresented: $viewModel.isShowingUnsavedChangesAlert) {
             Button("Save") {
                 Task {

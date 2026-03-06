@@ -1,6 +1,13 @@
 import Foundation
 import Observation
 
+struct StagedURLInstall: Sendable {
+    let repoURL: String
+    let cloneDestination: URL
+    let skillDirs: [URL]
+    let skillNames: [String]
+}
+
 @MainActor
 @Observable
 final class SkillManager {
@@ -94,9 +101,21 @@ final class SkillManager {
         try await loadSkills()
     }
 
+    // MARK: - Duplicate Detection
+
+    func findDuplicateNames(for sourceURLs: [URL]) -> [String] {
+        sourceURLs
+            .map { $0.lastPathComponent }
+            .filter { fileSystemManager.skillExists(named: $0) }
+    }
+
+    func findDuplicateSkillNames(_ names: [String]) -> [String] {
+        names.filter { fileSystemManager.skillExists(named: $0) }
+    }
+
     // MARK: - Add Skill from URL
 
-    func addSkillFromURL(repoURL: String) async throws {
+    func stageSkillFromURL(repoURL: String) async throws -> StagedURLInstall {
         guard repoURL.hasPrefix("https://") else {
             throw SkillManagerError.invalidURL
         }
@@ -141,22 +160,50 @@ final class SkillManager {
             throw SkillManagerError.noSkillMDInRepo
         }
 
-        for skillDir in skillDirs {
-            let skillName = skillDir == cloneDestination ? repoName : skillDir.lastPathComponent
+        let skillNames = skillDirs.map { dir in
+            dir == cloneDestination ? repoName : dir.lastPathComponent
+        }
+
+        return StagedURLInstall(
+            repoURL: repoURL,
+            cloneDestination: cloneDestination,
+            skillDirs: skillDirs,
+            skillNames: skillNames
+        )
+    }
+
+    func commitStagedURLInstall(_ staged: StagedURLInstall) async throws {
+        let fm = FileManager.default
+        for (skillDir, skillName) in zip(staged.skillDirs, staged.skillNames) {
             let symlinkPath = fileSystemManager.skillsDirectoryURL.appendingPathComponent(skillName)
+
+            // Remove existing item if present (user already confirmed overwrite)
+            if fm.fileExists(atPath: symlinkPath.path) {
+                try fm.removeItem(at: symlinkPath)
+            }
+
             try fileSystemManager.createSymlink(at: symlinkPath, pointingTo: skillDir)
 
             // Store metadata
             var metadata = (try? metadataStore.load()) ?? [:]
             metadata[skillName] = SkillMetadata(
-                sourceRepoURL: repoURL,
-                clonedRepoPath: cloneDestination.path,
+                sourceRepoURL: staged.repoURL,
+                clonedRepoPath: staged.cloneDestination.path,
                 installedAt: Date()
             )
             try metadataStore.save(metadata)
         }
 
         try await loadSkills()
+    }
+
+    func cancelStagedURLInstall(_ staged: StagedURLInstall) {
+        try? FileManager.default.removeItem(at: staged.cloneDestination)
+    }
+
+    func addSkillFromURL(repoURL: String) async throws {
+        let staged = try await stageSkillFromURL(repoURL: repoURL)
+        try await commitStagedURLInstall(staged)
     }
 
     // MARK: - Enable / Disable
