@@ -2,9 +2,9 @@
 
 ## Overview
 
-Agent Skill Manager is a native macOS desktop application for managing Claude Code skills. It provides a graphical interface to view, add, edit, enable/disable, and delete skills installed in `~/.claude/skills/`. The app replaces manual file system operations with a cohesive UI, making skill management accessible without terminal commands.
+Agent Skill Manager is a native macOS desktop application for managing Claude Code and personal Codex skills. It provides a graphical interface to view, add, edit, enable/disable, and delete skills installed in each ecosystem's user-level locations. The app replaces manual file system operations with a cohesive UI, making skill management accessible without terminal commands.
 
-**Target user:** Claude Code power users who install and customize skills regularly.
+**Target user:** Claude Code and Codex power users who install and customize skills regularly.
 
 **Tech stack:** Swift + SwiftUI, built with XcodeGen (`project.yml`).
 
@@ -14,7 +14,7 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 
 ### Viewing Skills
 
-- As a user, I want to see all my installed Claude Code skills in a sidebar so I can quickly browse what I have.
+- As a user, I want to switch the sidebar between Claude Code and Codex skills so I can quickly browse what I have in each ecosystem.
 - As a user, I want to select a skill and see its metadata (name, description, file path, whether it's a symlink, enabled/disabled status) in a detail panel so I can understand what each skill does and where it lives.
 - As a user, I want to search/filter my skills by name or description so I can find a specific skill quickly.
 
@@ -43,18 +43,19 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 
 ### FR-1: Skill Discovery & Loading
 
-1. On launch and on every app-focus event (`.onReceive(NotificationCenter...scenePhase)`), the app scans `~/.claude/skills/` to discover installed skills.
-2. Each subdirectory containing a `SKILL.md` file is treated as a skill.
-3. The app also scans `~/.claude/skills-disabled/` to discover disabled skills.
-4. For each skill, the app parses the SKILL.md YAML frontmatter to extract:
+1. On launch and on every app-focus event (`.onReceive(NotificationCenter...scenePhase)`), the app scans the selected provider's user-level skill locations.
+2. For Claude Code, each subdirectory containing a `SKILL.md` file under `~/.claude/skills/` is treated as a skill.
+3. The app also scans `~/.claude/skills-disabled/` to discover disabled Claude Code skills.
+4. For Codex, each direct child directory containing a `SKILL.md` file under `~/.agents/skills/` is treated as a personal skill.
+5. For each skill, the app parses the SKILL.md YAML frontmatter to extract:
    - `name` (string, required)
    - `description` (string, required)
-5. The app detects whether the skill directory is a symlink (using `FileManager` symlink APIs).
-6. For symlinked skills, the app resolves and stores the symlink target path.
+6. The app detects whether the skill directory is a symlink (using `FileManager` symlink APIs).
+7. For symlinked skills, the app resolves and stores the symlink target path.
 
 ### FR-2: Sidebar
 
-1. The left sidebar displays a scrollable list of all discovered skills (both enabled and disabled).
+1. The left sidebar displays a segmented provider switcher (`Claude Code`, `Codex`) above a scrollable list of the selected provider's discovered skills.
 2. Each entry shows:
    - Skill name (from frontmatter)
    - Truncated description (first ~80 characters, single line)
@@ -67,7 +68,8 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 1. The right panel displays metadata for the selected skill:
    - **Name** — from SKILL.md frontmatter
    - **Description** — full description from frontmatter
-   - **File path** — absolute path to the skill directory in `~/.claude/skills/` (or `~/.claude/skills-disabled/` if disabled)
+   - **Provider** — Claude Code or Codex
+   - **File path** — absolute path to the selected provider's skill directory
    - **Symlink status** — "Symlink → {target path}" or "Local copy"
    - **Source** — "Imported from file" or "Cloned from {repo URL}" (if metadata available)
    - **Status** — Enabled / Disabled
@@ -85,7 +87,9 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
    - A directory containing a `SKILL.md` file, or
    - A `SKILL.md` file directly (the app uses its parent directory)
 4. Validation: the app checks that a valid `SKILL.md` exists with parseable frontmatter (`name` and `description` fields).
-5. If valid, the app **copies** the entire skill directory into `~/.claude/skills/{skill-name}/`.
+5. If valid, the app **copies** the entire skill directory into the active provider's managed directory:
+   - Claude Code: `~/.claude/skills/{skill-name}/`
+   - Codex: `~/.agents/skills/{skill-name}/`
 6. If a skill with the same name already exists, the app shows a confirmation dialog: overwrite or cancel.
 7. The sidebar refreshes to show the newly added skill.
 
@@ -96,8 +100,8 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 3. The app clones the repository into `~/Library/Application Support/Agent-Skill-Manager/repos/{repo-name}/`.
 4. The app scans the cloned repo for directories containing `SKILL.md` files.
 5. If exactly one skill is found, it proceeds automatically. If multiple skills are found, the user selects which one(s) to install.
-6. For each selected skill, the app creates a **symlink** in `~/.claude/skills/{skill-name}` pointing to the skill directory inside the cloned repo.
-7. The app stores metadata associating the installed skill with its source repo URL (for the "Pull Latest" feature). Metadata is stored in `~/Library/Application Support/Agent-Skill-Manager/metadata.json`.
+6. For each selected skill, the app creates a **symlink** in the active provider's managed directory pointing to the skill directory inside the cloned repo.
+7. The app stores metadata associating the installed skill with its source repo URL (for the "Pull Latest" feature) in a provider-specific metadata file.
 8. The sidebar refreshes to show the newly added skill(s).
 9. Errors (invalid URL, clone failure, no SKILL.md found) are shown as alert dialogs with descriptive messages.
 
@@ -115,11 +119,11 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 
 1. Each skill has an enable/disable toggle (or button) in the detail panel.
 2. **Disabling** a skill:
-   - Moves the skill directory from `~/.claude/skills/{name}/` to `~/.claude/skills-disabled/{name}/`.
-   - If the skill is a symlink, moves the symlink (not the target).
-   - Creates `~/.claude/skills-disabled/` if it doesn't exist.
+   - Claude Code: moves the skill directory from `~/.claude/skills/{name}/` to `~/.claude/skills-disabled/{name}/`.
+   - Codex: writes a matching `[[skills.config]]` entry to `~/.codex/config.toml` with `enabled = false`.
 3. **Enabling** a skill:
-   - Moves the skill directory from `~/.claude/skills-disabled/{name}/` back to `~/.claude/skills/{name}/`.
+   - Claude Code: moves the skill directory from `~/.claude/skills-disabled/{name}/` back to `~/.claude/skills/{name}/`.
+   - Codex: removes the matching `[[skills.config]]` override from `~/.codex/config.toml`.
 4. The sidebar updates the skill's visual state immediately.
 5. If a naming conflict exists in the target directory, the app shows an error and does not proceed.
 
@@ -160,7 +164,7 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 
 ### NFR-3: Data Safety
 
-- The app never modifies files outside of `~/.claude/skills/`, `~/.claude/skills-disabled/`, and `~/Library/Application Support/Agent-Skill-Manager/` — except when the user explicitly chooses "Remove link and source" for a symlinked skill.
+- The app never modifies files outside of `~/.claude/skills/`, `~/.claude/skills-disabled/`, `~/.agents/skills/`, `~/.codex/config.toml`, and `~/Library/Application Support/Agent-Skill-Manager/` — except when the user explicitly chooses "Remove link and source" for a symlinked skill.
 - All destructive operations (delete, overwrite) require user confirmation.
 - The editor warns before overwriting externally-modified files.
 
@@ -177,12 +181,13 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 | Field | Type | Description |
 |-------|------|-------------|
 | `id` | `UUID` | Unique identifier (generated at load time) |
+| `provider` | `SkillProvider` | Claude Code or Codex |
 | `name` | `String` | From SKILL.md frontmatter |
 | `description` | `String` | From SKILL.md frontmatter |
-| `directoryURL` | `URL` | Path to skill directory in skills/ or skills-disabled/ |
+| `directoryURL` | `URL` | Path to skill directory in the active provider's storage |
 | `isSymlink` | `Bool` | Whether the directory is a symlink |
 | `symlinkTarget` | `URL?` | Resolved target if symlink |
-| `isEnabled` | `Bool` | true if in skills/, false if in skills-disabled/ |
+| `isEnabled` | `Bool` | true if enabled for the provider, false if disabled via folder move or Codex config override |
 | `sourceRepoURL` | `String?` | Git repo URL if installed from URL |
 | `rawContent` | `String` | Full SKILL.md file content (loaded on demand) |
 
@@ -200,7 +205,9 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 }
 ```
 
-Stored at `~/Library/Application Support/Agent-Skill-Manager/metadata.json`. Read on launch, updated on install/delete.
+Stored at provider-specific paths:
+- Claude Code: `~/Library/Application Support/Agent-Skill-Manager/metadata.json`
+- Codex: `~/Library/Application Support/Agent-Skill-Manager/codex-metadata.json`
 
 ## UI Layout
 
@@ -266,10 +273,13 @@ Stored at `~/Library/Application Support/Agent-Skill-Manager/metadata.json`. Rea
 
 | Path | Purpose |
 |------|---------|
-| `~/.claude/skills/` | Active (enabled) skills |
-| `~/.claude/skills-disabled/` | Disabled skills (managed by this app) |
+| `~/.claude/skills/` | Active Claude Code skills |
+| `~/.claude/skills-disabled/` | Disabled Claude Code skills |
+| `~/.agents/skills/` | Personal Codex skills |
+| `~/.codex/config.toml` | Codex enable/disable overrides |
 | `~/Library/Application Support/Agent-Skill-Manager/repos/` | Cloned Git repos for URL-installed skills |
-| `~/Library/Application Support/Agent-Skill-Manager/metadata.json` | Install metadata (source URLs, timestamps) |
+| `~/Library/Application Support/Agent-Skill-Manager/metadata.json` | Claude install metadata |
+| `~/Library/Application Support/Agent-Skill-Manager/codex-metadata.json` | Codex install metadata |
 
 ### Concurrency Model
 

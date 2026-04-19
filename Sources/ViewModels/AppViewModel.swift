@@ -13,12 +13,28 @@ enum DetailTab: String, Sendable {
 @Observable
 final class AppViewModel {
 
+    private static let detailPanelTabDefaultsKey = "detailPanelTab"
+    private static let selectedProviderDefaultsKey = "selectedSkillProvider"
+
     // MARK: - Published State
 
+    var selectedProvider: SkillProvider = .claudeCode {
+        didSet {
+            UserDefaults.standard.set(selectedProvider.rawValue, forKey: Self.selectedProviderDefaultsKey)
+        }
+    }
     var skills: [Skill] = []
     var filteredSkills: [Skill] = []
-    var selectedSkill: Skill?
-    var searchText: String = ""
+    var selectedSkill: Skill? {
+        didSet {
+            selectedSkillPathByProvider[selectedProvider] = selectedSkill?.directoryURL.path
+        }
+    }
+    var searchText: String = "" {
+        didSet {
+            searchTextByProvider[selectedProvider] = searchText
+        }
+    }
     var isLoading: Bool = false
     var errorMessage: String?
 
@@ -30,12 +46,13 @@ final class AppViewModel {
     var isShowingExternalModificationWarning: Bool = false
     var isShowingUnsavedChangesAlert: Bool = false
     var pendingSkillSelection: Skill?
+    var pendingProviderSelection: SkillProvider?
 
     // Editor mode & detail tab
     var editorMode: EditorMode = .edit
     var detailPanelTab: DetailTab = .info {
         didSet {
-            UserDefaults.standard.set(detailPanelTab.rawValue, forKey: "detailPanelTab")
+            UserDefaults.standard.set(detailPanelTab.rawValue, forKey: Self.detailPanelTabDefaultsKey)
         }
     }
 
@@ -63,33 +80,52 @@ final class AppViewModel {
 
     // MARK: - Private
 
-    private let skillManager: SkillManager
+    private let claudeSkillManager: SkillManager
+    private let codexSkillManager: SkillManager
+    private var skillsByProvider: [SkillProvider: [Skill]] = [:]
+    private var selectedSkillPathByProvider: [SkillProvider: String] = [:]
+    private var searchTextByProvider: [SkillProvider: String] = [:]
 
     // MARK: - Init
 
-    init(skillManager: SkillManager) {
-        self.skillManager = skillManager
-        let savedTab = UserDefaults.standard.string(forKey: "detailPanelTab")
+    init(claudeSkillManager: SkillManager, codexSkillManager: SkillManager) {
+        self.claudeSkillManager = claudeSkillManager
+        self.codexSkillManager = codexSkillManager
+
+        let savedProvider = UserDefaults.standard.string(forKey: Self.selectedProviderDefaultsKey)
+        self.selectedProvider = SkillProvider(rawValue: savedProvider ?? "") ?? .claudeCode
+
+        let savedTab = UserDefaults.standard.string(forKey: Self.detailPanelTabDefaultsKey)
         self.detailPanelTab = DetailTab(rawValue: savedTab ?? "") ?? .info
+
+        self.skillsByProvider = Dictionary(uniqueKeysWithValues: SkillProvider.allCases.map { ($0, []) })
+        self.searchTextByProvider = Dictionary(uniqueKeysWithValues: SkillProvider.allCases.map { ($0, "") })
+        restoreState(for: selectedProvider)
     }
 
     // MARK: - Load Skills
 
     func loadSkills() async {
         isLoading = true
+        errorMessage = nil
         defer { isLoading = false }
 
-        do {
-            try await skillManager.loadSkills()
-            skills = skillManager.skills
-            applyFilter()
+        await loadSkills(for: .claudeCode)
+        await loadSkills(for: .codex)
+        restoreState(for: selectedProvider)
+    }
 
-            // Preserve selection if the skill still exists
-            if let selected = selectedSkill {
-                selectedSkill = skills.first { $0.name == selected.name }
-            }
+    private func loadSkills(for provider: SkillProvider) async {
+        do {
+            try await refreshProvider(provider)
         } catch {
-            errorMessage = error.localizedDescription
+            skillsByProvider[provider] = []
+            selectedSkillPathByProvider[provider] = nil
+
+            if provider == selectedProvider {
+                restoreState(for: provider)
+                errorMessage = error.localizedDescription
+            }
         }
     }
 
@@ -99,6 +135,7 @@ final class AppViewModel {
         if isEditing {
             if editorContent != editorOriginalContent {
                 pendingSkillSelection = skill
+                pendingProviderSelection = nil
                 isShowingUnsavedChangesAlert = true
             } else {
                 selectedSkill = skill
@@ -106,6 +143,23 @@ final class AppViewModel {
             }
         } else {
             selectedSkill = skill
+        }
+    }
+
+    func requestProviderSelection(_ provider: SkillProvider) {
+        guard provider != selectedProvider else { return }
+
+        if isEditing {
+            if editorContent != editorOriginalContent {
+                pendingProviderSelection = provider
+                pendingSkillSelection = nil
+                isShowingUnsavedChangesAlert = true
+            } else {
+                cancelEditing()
+                switchProvider(to: provider)
+            }
+        } else {
+            switchProvider(to: provider)
         }
     }
 
@@ -135,7 +189,7 @@ final class AppViewModel {
     }
 
     func addSkillsFromFiles(urls: [URL]) async {
-        let duplicates = skillManager.findDuplicateNames(for: urls)
+        let duplicates = activeSkillManager.findDuplicateNames(for: urls)
         if duplicates.isEmpty {
             await performFileImport(urls: urls)
         } else {
@@ -149,13 +203,18 @@ final class AppViewModel {
         var errors: [String] = []
         for url in urls {
             do {
-                try await skillManager.addSkillFromFile(sourceURL: url)
+                try await activeSkillManager.addSkillFromFile(sourceURL: url)
             } catch {
                 errors.append("\(url.lastPathComponent): \(error.localizedDescription)")
             }
         }
-        skills = skillManager.skills
-        applyFilter()
+
+        do {
+            try await refreshProvider(selectedProvider)
+        } catch {
+            errors.append(error.localizedDescription)
+        }
+
         if errors.isEmpty {
             isShowingAddSheet = false
         } else {
@@ -167,12 +226,11 @@ final class AppViewModel {
 
     func addSkillFromURL() async {
         do {
-            let staged = try await skillManager.stageSkillFromURL(repoURL: addSkillURL)
-            let duplicates = skillManager.findDuplicateSkillNames(staged.skillNames)
+            let staged = try await activeSkillManager.stageSkillFromURL(repoURL: addSkillURL)
+            let duplicates = activeSkillManager.findDuplicateSkillNames(staged.skillNames)
             if duplicates.isEmpty {
-                try await skillManager.commitStagedURLInstall(staged)
-                skills = skillManager.skills
-                applyFilter()
+                try await activeSkillManager.commitStagedURLInstall(staged)
+                try await refreshProvider(selectedProvider)
                 isShowingAddSheet = false
                 addSkillURL = ""
             } else {
@@ -197,9 +255,8 @@ final class AppViewModel {
             pendingStagedURLInstall = nil
             duplicateSkillNames = []
             do {
-                try await skillManager.commitStagedURLInstall(staged)
-                skills = skillManager.skills
-                applyFilter()
+                try await activeSkillManager.commitStagedURLInstall(staged)
+                try await refreshProvider(selectedProvider)
                 isShowingAddSheet = false
                 addSkillURL = ""
             } catch {
@@ -210,7 +267,7 @@ final class AppViewModel {
 
     func cancelOverwriteDuplicates() {
         if let staged = pendingStagedURLInstall {
-            skillManager.cancelStagedURLInstall(staged)
+            activeSkillManager.cancelStagedURLInstall(staged)
             pendingStagedURLInstall = nil
         }
         pendingFileImportURLs = []
@@ -233,11 +290,11 @@ final class AppViewModel {
 
     func enableSkill() async {
         guard let skill = selectedSkill else { return }
+        let directoryName = skill.directoryURL.lastPathComponent
         do {
-            try await skillManager.enableSkill(skill)
-            skills = skillManager.skills
-            applyFilter()
-            selectedSkill = skills.first { $0.name == skill.name }
+            try await activeSkillManager.enableSkill(skill)
+            try await refreshProvider(selectedProvider)
+            selectedSkill = skills.first { $0.directoryURL.lastPathComponent == directoryName }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -245,11 +302,11 @@ final class AppViewModel {
 
     func disableSkill() async {
         guard let skill = selectedSkill else { return }
+        let directoryName = skill.directoryURL.lastPathComponent
         do {
-            try await skillManager.disableSkill(skill)
-            skills = skillManager.skills
-            applyFilter()
-            selectedSkill = skills.first { $0.name == skill.name }
+            try await activeSkillManager.disableSkill(skill)
+            try await refreshProvider(selectedProvider)
+            selectedSkill = skills.first { $0.directoryURL.lastPathComponent == directoryName }
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -260,10 +317,10 @@ final class AppViewModel {
     func deleteSkill(removeSource: Bool) async {
         guard let skill = selectedSkill else { return }
         do {
-            try await skillManager.deleteSkill(skill, removeSource: removeSource)
+            try await activeSkillManager.deleteSkill(skill, removeSource: removeSource)
+            selectedSkillPathByProvider[selectedProvider] = nil
             selectedSkill = nil
-            skills = skillManager.skills
-            applyFilter()
+            try await refreshProvider(selectedProvider)
             isShowingDeleteConfirmation = false
         } catch {
             errorMessage = error.localizedDescription
@@ -277,8 +334,8 @@ final class AppViewModel {
         isPulling = true
         defer { isPulling = false }
         do {
-            _ = try await skillManager.pullLatest(for: skill)
-            await loadSkills()
+            _ = try await activeSkillManager.pullLatest(for: skill)
+            try await refreshProvider(selectedProvider)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -291,7 +348,7 @@ final class AppViewModel {
         isExporting = true
         defer { isExporting = false }
         do {
-            try skillManager.exportSkill(skill, to: url)
+            try activeSkillManager.exportSkill(skill, to: url)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -303,7 +360,7 @@ final class AppViewModel {
         editorMode = .edit
         guard let skill = selectedSkill else { return }
         do {
-            let content = try skillManager.readSkillContent(skill)
+            let content = try activeSkillManager.readSkillContent(skill)
             editorContent = content
             editorOriginalContent = content
             let filePath = skill.directoryURL.appendingPathComponent("SKILL.md").path
@@ -326,11 +383,11 @@ final class AppViewModel {
                 isShowingExternalModificationWarning = true
                 return
             }
-            try skillManager.saveSkillContent(skill, content: editorContent)
+            try activeSkillManager.saveSkillContent(skill, content: editorContent)
             editorMode = .edit
             isEditing = false
             editorFileModificationDate = nil
-            await loadSkills()
+            try await refreshProvider(selectedProvider)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -339,12 +396,12 @@ final class AppViewModel {
     func forceSaveEditing() async {
         guard let skill = selectedSkill else { return }
         do {
-            try skillManager.saveSkillContent(skill, content: editorContent)
+            try activeSkillManager.saveSkillContent(skill, content: editorContent)
             editorMode = .edit
             isEditing = false
             editorFileModificationDate = nil
             isShowingExternalModificationWarning = false
-            await loadSkills()
+            try await refreshProvider(selectedProvider)
         } catch {
             errorMessage = error.localizedDescription
         }
@@ -361,22 +418,124 @@ final class AppViewModel {
     // MARK: - Unsaved Changes Navigation
 
     func saveAndNavigateToSkill() async {
-        guard let pending = pendingSkillSelection else { return }
+        let pendingSkillPath = pendingSkillSelection?.directoryURL.path
+        let pendingProvider = pendingProviderSelection
         await saveEditing()
+        guard !isEditing else { return }
+
         pendingSkillSelection = nil
-        selectedSkill = pending
-        startEditing()
+        pendingProviderSelection = nil
+
+        if let pendingProvider {
+            switchProvider(to: pendingProvider)
+        } else if let pendingSkillPath {
+            selectSkillForCurrentProvider(at: pendingSkillPath, restartEditing: true)
+        }
     }
 
     func discardAndNavigateToSkill() {
-        guard let pending = pendingSkillSelection else { return }
+        let pendingSkillPath = pendingSkillSelection?.directoryURL.path
+        let pendingProvider = pendingProviderSelection
         cancelEditing()
         pendingSkillSelection = nil
-        selectedSkill = pending
-        startEditing()
+        pendingProviderSelection = nil
+
+        if let pendingProvider {
+            switchProvider(to: pendingProvider)
+        } else if let pendingSkillPath {
+            selectSkillForCurrentProvider(at: pendingSkillPath, restartEditing: true)
+        }
     }
 
     func cancelNavigationToSkill() {
         pendingSkillSelection = nil
+        pendingProviderSelection = nil
+    }
+
+    // MARK: - View Helpers
+
+    var providerSearchPrompt: String {
+        selectedProvider.searchPrompt
+    }
+
+    var addSkillTitle: String {
+        selectedProvider.addSkillTitle
+    }
+
+    var addSkillHelp: String {
+        selectedProvider.addSkillHelp
+    }
+
+    var providerDisplayName: String {
+        selectedProvider.displayName
+    }
+
+    // MARK: - Private Helpers
+
+    private var activeSkillManager: SkillManager {
+        manager(for: selectedProvider)
+    }
+
+    private func manager(for provider: SkillProvider) -> SkillManager {
+        switch provider {
+        case .claudeCode:
+            return claudeSkillManager
+        case .codex:
+            return codexSkillManager
+        }
+    }
+
+    private func refreshProvider(_ provider: SkillProvider) async throws {
+        try await manager(for: provider).loadSkills()
+        syncProviderState(for: provider)
+    }
+
+    private func syncProviderState(for provider: SkillProvider) {
+        let loadedSkills = manager(for: provider).skills
+        skillsByProvider[provider] = loadedSkills
+
+        if let selectedPath = selectedSkillPathByProvider[provider],
+           !loadedSkills.contains(where: { $0.directoryURL.path == selectedPath }) {
+            selectedSkillPathByProvider[provider] = nil
+        }
+
+        if provider == selectedProvider {
+            restoreState(for: provider)
+        }
+    }
+
+    private func restoreState(for provider: SkillProvider) {
+        skills = skillsByProvider[provider, default: []]
+        searchText = searchTextByProvider[provider, default: ""]
+        selectedSkill = selectedSkillFor(provider: provider, within: skills)
+        applyFilter()
+    }
+
+    private func switchProvider(to provider: SkillProvider) {
+        persistActiveState()
+        selectedProvider = provider
+        restoreState(for: provider)
+    }
+
+    private func persistActiveState() {
+        skillsByProvider[selectedProvider] = skills
+        searchTextByProvider[selectedProvider] = searchText
+        selectedSkillPathByProvider[selectedProvider] = selectedSkill?.directoryURL.path
+    }
+
+    private func selectedSkillFor(provider: SkillProvider, within skills: [Skill]) -> Skill? {
+        guard let selectedPath = selectedSkillPathByProvider[provider] else {
+            return nil
+        }
+
+        return skills.first { $0.directoryURL.path == selectedPath }
+    }
+
+    private func selectSkillForCurrentProvider(at path: String, restartEditing: Bool) {
+        guard let skill = skills.first(where: { $0.directoryURL.path == path }) else { return }
+        selectedSkill = skill
+        if restartEditing {
+            startEditing()
+        }
     }
 }

@@ -21,7 +21,7 @@ struct DetailPanelView: View {
                                 .foregroundStyle(.secondary)
                         }
                         .buttonStyle(.plain)
-                        .help("Copy skill name")
+                        .help("Copy \(skill.provider.displayName) skill name")
 
                         Button {
                             exportSkill(skill)
@@ -55,6 +55,13 @@ struct DetailPanelView: View {
                     VStack(alignment: .leading, spacing: 16) {
                     // Metadata grid
                     Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 8) {
+                        GridRow {
+                            Text("Provider:")
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                            Text(skill.provider.displayName)
+                        }
+
                         GridRow {
                             Text("Description:")
                                 .fontWeight(.semibold)
@@ -201,7 +208,7 @@ struct DetailPanelView: View {
         } else {
             ContentUnavailableView("No Skill Selected",
                                    systemImage: "doc.text",
-                                   description: Text("Select a skill from the sidebar to view its details."))
+                                   description: Text("Select a \(viewModel.providerDisplayName) skill from the sidebar to view its details."))
         }
     }
 

@@ -119,6 +119,24 @@ struct FileSystemManagerTests {
         #expect(disabledResults.count == 1)
     }
 
+    @Test("Scan works without a disabled directory for Codex-style storage")
+    func scanWithoutDisabledDirectory() throws {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FileSystemManagerTests-\(UUID().uuidString)", isDirectory: true)
+        let skillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        defer { cleanUp(tempRoot) }
+
+        try FileManager.default.createDirectory(at: skillsDir, withIntermediateDirectories: true)
+        try createSkillDirectory(named: "codex-skill", in: skillsDir)
+
+        let manager = FileSystemManager(skillsDirectoryURL: skillsDir)
+        let results = try manager.scanSkills()
+
+        #expect(results.count == 1)
+        #expect(results.first?.directoryURL.lastPathComponent == "codex-skill")
+        #expect(results.first?.isEnabled == true)
+    }
+
     @Test("Scan ignores directories without SKILL.md")
     func scanIgnoresDirectoriesWithoutSkillMD() throws {
         let (tempRoot, skillsDir, disabledDir) = try makeTempEnvironment()

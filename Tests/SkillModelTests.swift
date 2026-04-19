@@ -5,13 +5,12 @@ import Foundation
 @Suite("Skill Model Tests")
 struct SkillModelTests {
 
-    // MARK: - Initialization
-
-    @Test("Initializes a Skill with all required fields")
-    func initWithAllFields() {
+    @Test("Initializes a Claude skill with all required fields")
+    func initClaudeSkill() {
         let directoryURL = URL(fileURLWithPath: "/Users/test/.claude/skills/my-skill")
         let skill = Skill(
             id: UUID(),
+            provider: .claudeCode,
             name: "my-skill",
             description: "A test skill",
             directoryURL: directoryURL,
@@ -23,35 +22,36 @@ struct SkillModelTests {
             fileTree: []
         )
 
+        #expect(skill.provider == .claudeCode)
         #expect(skill.name == "my-skill")
-        #expect(skill.description == "A test skill")
         #expect(skill.directoryURL == directoryURL)
-        #expect(skill.isSymlink == false)
-        #expect(skill.symlinkTarget == nil)
         #expect(skill.isEnabled == true)
         #expect(skill.sourceRepoURL == nil)
-        #expect(skill.rawContent.contains("Body"))
+        #expect(skill.skillMDURL.path.hasSuffix("/my-skill/SKILL.md"))
     }
 
-    @Test("Initializes a symlinked skill with target path")
-    func initSymlinkedSkill() {
-        let directoryURL = URL(fileURLWithPath: "/Users/test/.claude/skills/linked-skill")
-        let targetURL = URL(fileURLWithPath: "/Users/test/Library/Application Support/Agent-Skill-Manager/repos/repo/skill")
+    @Test("Initializes a Codex skill with provider metadata")
+    func initCodexSkill() {
+        let directoryURL = URL(fileURLWithPath: "/Users/test/.agents/skills/frontend-design")
+        let targetURL = URL(fileURLWithPath: "/Users/test/repos/frontend-design")
         let skill = Skill(
             id: UUID(),
-            name: "linked-skill",
-            description: "A symlinked skill",
+            provider: .codex,
+            name: "frontend-design",
+            description: "A Codex skill",
             directoryURL: directoryURL,
             isSymlink: true,
             symlinkTarget: targetURL,
-            isEnabled: true,
+            isEnabled: false,
             sourceRepoURL: "https://github.com/user/repo",
             rawContent: "",
             fileTree: []
         )
 
+        #expect(skill.provider == .codex)
         #expect(skill.isSymlink == true)
         #expect(skill.symlinkTarget == targetURL)
+        #expect(skill.isEnabled == false)
         #expect(skill.sourceRepoURL == "https://github.com/user/repo")
     }
 
@@ -60,6 +60,7 @@ struct SkillModelTests {
         let url = URL(fileURLWithPath: "/Users/test/.claude/skills/skill")
         let skill1 = Skill(
             id: UUID(),
+            provider: .claudeCode,
             name: "skill-1",
             description: "First",
             directoryURL: url,
@@ -72,6 +73,7 @@ struct SkillModelTests {
         )
         let skill2 = Skill(
             id: UUID(),
+            provider: .claudeCode,
             name: "skill-2",
             description: "Second",
             directoryURL: url,
@@ -86,89 +88,11 @@ struct SkillModelTests {
         #expect(skill1.id != skill2.id)
     }
 
-    // MARK: - Enabled/Disabled State from Path
-
-    @Test("Skill is enabled when directory is under skills/")
-    func enabledWhenInSkillsDirectory() {
-        let directoryURL = URL(fileURLWithPath: "/Users/test/.claude/skills/my-skill")
-        let skill = Skill(
-            id: UUID(),
-            name: "my-skill",
-            description: "Enabled skill",
-            directoryURL: directoryURL,
-            isSymlink: false,
-            symlinkTarget: nil,
-            isEnabled: true,
-            sourceRepoURL: nil,
-            rawContent: "",
-            fileTree: []
-        )
-
-        #expect(skill.isEnabled == true)
-    }
-
-    @Test("Skill is disabled when directory is under skills-disabled/")
-    func disabledWhenInSkillsDisabledDirectory() {
-        let directoryURL = URL(fileURLWithPath: "/Users/test/.claude/skills-disabled/my-skill")
-        let skill = Skill(
-            id: UUID(),
-            name: "my-skill",
-            description: "Disabled skill",
-            directoryURL: directoryURL,
-            isSymlink: false,
-            symlinkTarget: nil,
-            isEnabled: false,
-            sourceRepoURL: nil,
-            rawContent: "",
-            fileTree: []
-        )
-
-        #expect(skill.isEnabled == false)
-    }
-
-    @Test("isEnabled reflects the skills/ path correctly for path-derived enablement")
-    func isEnabledDerivedFromPath() {
-        let enabledURL = URL(fileURLWithPath: "/Users/test/.claude/skills/test-skill")
-        let disabledURL = URL(fileURLWithPath: "/Users/test/.claude/skills-disabled/test-skill")
-
-        // A skill in skills/ should be enabled
-        let enabledSkill = Skill(
-            id: UUID(),
-            name: "test-skill",
-            description: "Test",
-            directoryURL: enabledURL,
-            isSymlink: false,
-            symlinkTarget: nil,
-            isEnabled: true,
-            sourceRepoURL: nil,
-            rawContent: "",
-            fileTree: []
-        )
-
-        // A skill in skills-disabled/ should be disabled
-        let disabledSkill = Skill(
-            id: UUID(),
-            name: "test-skill",
-            description: "Test",
-            directoryURL: disabledURL,
-            isSymlink: false,
-            symlinkTarget: nil,
-            isEnabled: false,
-            sourceRepoURL: nil,
-            rawContent: "",
-            fileTree: []
-        )
-
-        #expect(enabledSkill.isEnabled == true)
-        #expect(disabledSkill.isEnabled == false)
-    }
-
-    // MARK: - Optional Fields
-
     @Test("sourceRepoURL is nil for locally imported skills")
     func sourceRepoURLNilForLocalSkills() {
         let skill = Skill(
             id: UUID(),
+            provider: .claudeCode,
             name: "local-skill",
             description: "Imported from file",
             directoryURL: URL(fileURLWithPath: "/Users/test/.claude/skills/local-skill"),
@@ -183,28 +107,11 @@ struct SkillModelTests {
         #expect(skill.sourceRepoURL == nil)
     }
 
-    @Test("sourceRepoURL is populated for URL-installed skills")
-    func sourceRepoURLForURLInstalledSkills() {
-        let skill = Skill(
-            id: UUID(),
-            name: "url-skill",
-            description: "Installed from URL",
-            directoryURL: URL(fileURLWithPath: "/Users/test/.claude/skills/url-skill"),
-            isSymlink: true,
-            symlinkTarget: URL(fileURLWithPath: "/path/to/repo/skill"),
-            isEnabled: true,
-            sourceRepoURL: "https://github.com/user/repo",
-            rawContent: "",
-            fileTree: []
-        )
-
-        #expect(skill.sourceRepoURL == "https://github.com/user/repo")
-    }
-
     @Test("symlinkTarget is nil for non-symlinked skills")
     func symlinkTargetNilForNonSymlinks() {
         let skill = Skill(
             id: UUID(),
+            provider: .claudeCode,
             name: "regular-skill",
             description: "A regular copied skill",
             directoryURL: URL(fileURLWithPath: "/Users/test/.claude/skills/regular-skill"),

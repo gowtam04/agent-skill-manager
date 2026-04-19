@@ -31,7 +31,7 @@ struct ContentView: View {
                 } label: {
                     Image(systemName: "plus")
                 }
-                .help("Add Skill")
+                .help(viewModel.addSkillHelp)
             }
         }
         .task {

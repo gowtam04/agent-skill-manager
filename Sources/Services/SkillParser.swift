@@ -86,7 +86,7 @@ enum SkillParser {
                     multiLineStyle = afterColon.first
                 } else {
                     currentKey = key
-                    currentValue = afterColon
+                    currentValue = normalizeScalarValue(afterColon)
                     isMultiLine = false
                     multiLineStyle = nil
                 }
@@ -112,5 +112,13 @@ enum SkillParser {
         }
 
         return fields
+    }
+
+    private static func normalizeScalarValue(_ value: String) -> String {
+        guard value.count >= 2 else { return value }
+        if (value.first == "\"" && value.last == "\"") || (value.first == "'" && value.last == "'") {
+            return String(value.dropFirst().dropLast())
+        }
+        return value
     }
 }

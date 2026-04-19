@@ -6,8 +6,10 @@ struct AgentSkillManagerApp: App {
 
     init() {
         let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let skillsDir = homeDir.appendingPathComponent(".claude/skills", isDirectory: true)
-        let disabledDir = homeDir.appendingPathComponent(".claude/skills-disabled", isDirectory: true)
+        let claudeSkillsDir = homeDir.appendingPathComponent(".claude/skills", isDirectory: true)
+        let claudeDisabledDir = homeDir.appendingPathComponent(".claude/skills-disabled", isDirectory: true)
+        let codexSkillsDir = homeDir.appendingPathComponent(".agents/skills", isDirectory: true)
+        let codexConfigURL = homeDir.appendingPathComponent(".codex/config.toml")
 
         let appSupportDir: URL
         if let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first {
@@ -16,21 +18,40 @@ struct AgentSkillManagerApp: App {
             appSupportDir = homeDir.appendingPathComponent("Library/Application Support/Agent-Skill-Manager", isDirectory: true)
         }
 
-        let fileSystemManager = FileSystemManager(
-            skillsDirectoryURL: skillsDir,
-            disabledDirectoryURL: disabledDir
+        let claudeFileSystemManager = FileSystemManager(
+            skillsDirectoryURL: claudeSkillsDir,
+            disabledDirectoryURL: claudeDisabledDir
         )
-        let metadataStore = MetadataStore(
+        let claudeMetadataStore = MetadataStore(
             fileURL: appSupportDir.appendingPathComponent("metadata.json")
         )
-        let skillManager = SkillManager(
-            fileSystemManager: fileSystemManager,
+        let claudeSkillManager = SkillManager(
+            provider: .claudeCode,
+            fileSystemManager: claudeFileSystemManager,
             gitManager: GitManager(),
             skillParser: SkillParser.self,
-            metadataStore: metadataStore
+            metadataStore: claudeMetadataStore
         )
 
-        _viewModel = State(initialValue: AppViewModel(skillManager: skillManager))
+        let codexFileSystemManager = FileSystemManager(
+            skillsDirectoryURL: codexSkillsDir
+        )
+        let codexMetadataStore = MetadataStore(
+            fileURL: appSupportDir.appendingPathComponent("codex-metadata.json")
+        )
+        let codexSkillManager = SkillManager(
+            provider: .codex,
+            fileSystemManager: codexFileSystemManager,
+            gitManager: GitManager(),
+            skillParser: SkillParser.self,
+            metadataStore: codexMetadataStore,
+            codexConfigStore: CodexConfigStore(fileURL: codexConfigURL)
+        )
+
+        _viewModel = State(initialValue: AppViewModel(
+            claudeSkillManager: claudeSkillManager,
+            codexSkillManager: codexSkillManager
+        ))
     }
 
     var body: some Scene {

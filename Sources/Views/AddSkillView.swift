@@ -6,7 +6,7 @@ struct AddSkillView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("Add Skill")
+            Text(viewModel.addSkillTitle)
                 .font(.title2)
                 .fontWeight(.bold)
 
@@ -16,7 +16,7 @@ struct AddSkillView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Import from File")
                     .font(.headline)
-                Text("Select a directory containing a SKILL.md file.")
+                Text("Select one or more \(viewModel.providerDisplayName) skill directories containing a SKILL.md file.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 Button("Choose Folder...") {
@@ -31,7 +31,7 @@ struct AddSkillView: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Install from URL")
                     .font(.headline)
-                Text("Enter a public Git repository URL (HTTPS).")
+                Text("Enter a public Git repository URL (HTTPS) containing one or more \(viewModel.providerDisplayName) skills.")
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                 HStack {
@@ -74,7 +74,7 @@ struct AddSkillView: View {
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
         panel.allowsMultipleSelection = true
-        panel.message = "Select one or more skill directories containing SKILL.md"
+        panel.message = "Select one or more \(viewModel.providerDisplayName) skill directories containing SKILL.md"
 
         if panel.runModal() == .OK, !panel.urls.isEmpty {
             Task {

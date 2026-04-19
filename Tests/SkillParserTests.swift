@@ -106,6 +106,22 @@ struct SkillParserTests {
         #expect(result.description == "A skill with extra metadata")
     }
 
+    @Test("Parses quoted scalar values without retaining quotes")
+    func parseQuotedScalarValues() throws {
+        let content = """
+        ---
+        name: "quoted-skill"
+        description: "A quoted description"
+        ---
+        Body here.
+        """
+
+        let result = try SkillParser.parse(content: content)
+
+        #expect(result.name == "quoted-skill")
+        #expect(result.description == "A quoted description")
+    }
+
     @Test("Body is empty string when no content follows frontmatter")
     func parseEmptyBody() throws {
         let content = """

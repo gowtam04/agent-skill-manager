@@ -65,10 +65,32 @@ struct AppViewModelTests {
             fileURL: appSupportDir.appendingPathComponent("metadata.json")
         )
         return SkillManager(
+            provider: .claudeCode,
             fileSystemManager: fileSystemManager,
             gitManager: GitManager(),
             skillParser: SkillParser.self,
             metadataStore: metadataStore
+        )
+    }
+
+    private func makeCodexSkillManager(
+        skillsDir: URL,
+        appSupportDir: URL,
+        configFileURL: URL
+    ) -> SkillManager {
+        let fileSystemManager = FileSystemManager(
+            skillsDirectoryURL: skillsDir
+        )
+        let metadataStore = MetadataStore(
+            fileURL: appSupportDir.appendingPathComponent("codex-metadata.json")
+        )
+        return SkillManager(
+            provider: .codex,
+            fileSystemManager: fileSystemManager,
+            gitManager: GitManager(),
+            skillParser: SkillParser.self,
+            metadataStore: metadataStore,
+            codexConfigStore: CodexConfigStore(fileURL: configFileURL)
         )
     }
 
@@ -77,12 +99,28 @@ struct AppViewModelTests {
         disabledDir: URL,
         appSupportDir: URL
     ) -> AppViewModel {
-        let skillManager = makeSkillManager(
+        UserDefaults.standard.removeObject(forKey: "selectedSkillProvider")
+
+        let claudeSkillManager = makeSkillManager(
             skillsDir: skillsDir,
             disabledDir: disabledDir,
             appSupportDir: appSupportDir
         )
-        return AppViewModel(skillManager: skillManager)
+        let tempRoot = appSupportDir.deletingLastPathComponent()
+        let codexSkillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        let codexAppSupportDir = tempRoot.appendingPathComponent("codex-app-support", isDirectory: true)
+        let codexConfigURL = tempRoot.appendingPathComponent("codex-config.toml")
+        try? FileManager.default.createDirectory(at: codexSkillsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: codexAppSupportDir, withIntermediateDirectories: true)
+        let codexSkillManager = makeCodexSkillManager(
+            skillsDir: codexSkillsDir,
+            appSupportDir: codexAppSupportDir,
+            configFileURL: codexConfigURL
+        )
+        return AppViewModel(
+            claudeSkillManager: claudeSkillManager,
+            codexSkillManager: codexSkillManager
+        )
     }
 
     // MARK: - Loading & Refresh
@@ -1164,5 +1202,94 @@ struct AppViewModelTests {
         vm.selectSkill(skillB)
 
         #expect(vm.detailPanelTab == .content)
+    }
+
+    // MARK: - Provider Switching
+
+    @Test("Switching providers updates the active skill list")
+    func switchingProvidersUpdatesActiveSkillList() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let codexSkillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexSkillsDir, withIntermediateDirectories: true)
+
+        try createSkillDirectory(named: "claude-skill", in: skillsDir)
+        try createSkillDirectory(named: "codex-skill", in: codexSkillsDir)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        #expect(vm.selectedProvider == .claudeCode)
+        #expect(vm.skills.map(\.name) == ["claude-skill"])
+
+        vm.requestProviderSelection(.codex)
+
+        #expect(vm.selectedProvider == .codex)
+        #expect(vm.skills.map(\.name) == ["codex-skill"])
+        #expect(vm.skills.first?.provider == .codex)
+    }
+
+    @Test("Provider switch while editing with unsaved changes shows alert and defers switch")
+    func providerSwitchWhileEditingUnsavedChangesShowsAlert() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let codexSkillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexSkillsDir, withIntermediateDirectories: true)
+
+        try createSkillDirectory(named: "claude-edit", in: skillsDir)
+        try createSkillDirectory(named: "codex-edit", in: codexSkillsDir)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        let claudeSkill = try #require(vm.skills.first { $0.name == "claude-edit" })
+        vm.selectSkill(claudeSkill)
+        vm.startEditing()
+        vm.editorContent = "modified content"
+
+        vm.requestProviderSelection(.codex)
+
+        #expect(vm.isShowingUnsavedChangesAlert)
+        #expect(vm.pendingProviderSelection == .codex)
+        #expect(vm.selectedProvider == .claudeCode)
+
+        vm.discardAndNavigateToSkill()
+
+        #expect(vm.selectedProvider == .codex)
+        #expect(!vm.isEditing)
+        #expect(vm.skills.map(\.name) == ["codex-edit"])
+    }
+
+    @Test("Search text is preserved per provider while switching")
+    func searchTextPreservedPerProvider() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let codexSkillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        try FileManager.default.createDirectory(at: codexSkillsDir, withIntermediateDirectories: true)
+
+        try createSkillDirectory(named: "claude-alpha", in: skillsDir)
+        try createSkillDirectory(named: "claude-beta", in: skillsDir)
+        try createSkillDirectory(named: "codex-gamma", in: codexSkillsDir)
+        try createSkillDirectory(named: "codex-delta", in: codexSkillsDir)
+
+        let vm = makeViewModel(skillsDir: skillsDir, disabledDir: disabledDir, appSupportDir: appSupportDir)
+        await vm.loadSkills()
+
+        vm.searchSkills(query: "alpha")
+        #expect(vm.filteredSkills.map(\.name) == ["claude-alpha"])
+
+        vm.requestProviderSelection(.codex)
+        #expect(vm.searchText == "")
+        #expect(vm.filteredSkills.map(\.name).sorted() == ["codex-delta", "codex-gamma"])
+
+        vm.searchSkills(query: "gamma")
+        #expect(vm.filteredSkills.map(\.name) == ["codex-gamma"])
+
+        vm.requestProviderSelection(.claudeCode)
+        #expect(vm.searchText == "alpha")
+        #expect(vm.filteredSkills.map(\.name) == ["claude-alpha"])
     }
 }

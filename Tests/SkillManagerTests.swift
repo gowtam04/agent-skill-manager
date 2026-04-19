@@ -92,20 +92,26 @@ struct SkillManagerTests {
     private func makeSkillManager(
         skillsDir: URL,
         disabledDir: URL,
-        appSupportDir: URL
+        appSupportDir: URL,
+        provider: SkillProvider = .claudeCode,
+        codexConfigURL: URL? = nil
     ) -> SkillManager {
         let fileSystemManager = FileSystemManager(
             skillsDirectoryURL: skillsDir,
-            disabledDirectoryURL: disabledDir
+            disabledDirectoryURL: provider == .claudeCode ? disabledDir : nil
         )
         let metadataStore = MetadataStore(
-            fileURL: appSupportDir.appendingPathComponent("metadata.json")
+            fileURL: appSupportDir.appendingPathComponent(
+                provider == .claudeCode ? "metadata.json" : "codex-metadata.json"
+            )
         )
         return SkillManager(
+            provider: provider,
             fileSystemManager: fileSystemManager,
             gitManager: GitManager(),
             skillParser: SkillParser.self,
-            metadataStore: metadataStore
+            metadataStore: metadataStore,
+            codexConfigStore: codexConfigURL.map(CodexConfigStore.init(fileURL:))
         )
     }
 
@@ -336,6 +342,70 @@ struct SkillManagerTests {
         await #expect(throws: (any Error).self) {
             try await manager.enableSkill(disabledSkill)
         }
+    }
+
+    @Test("Codex disable writes config override and marks skill disabled")
+    func codexDisableWritesConfigOverride() async throws {
+        let (tempRoot, _, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let codexSkillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        let codexConfigURL = tempRoot.appendingPathComponent("codex-config.toml")
+        try FileManager.default.createDirectory(at: codexSkillsDir, withIntermediateDirectories: true)
+        try createSkillDirectory(named: "codex-skill", in: codexSkillsDir)
+
+        let manager = makeSkillManager(
+            skillsDir: codexSkillsDir,
+            disabledDir: disabledDir,
+            appSupportDir: appSupportDir,
+            provider: .codex,
+            codexConfigURL: codexConfigURL
+        )
+        try await manager.loadSkills()
+
+        let skill = try #require(manager.skills.first { $0.name == "codex-skill" })
+        try await manager.disableSkill(skill)
+
+        let config = try String(contentsOf: codexConfigURL, encoding: .utf8)
+        #expect(config.contains("[[skills.config]]"))
+        #expect(config.contains("enabled = false"))
+        #expect(config.contains("codex-skill/SKILL.md"))
+        #expect(manager.skills.first { $0.name == "codex-skill" }?.isEnabled == false)
+    }
+
+    @Test("Codex enable removes config override and marks skill enabled")
+    func codexEnableRemovesConfigOverride() async throws {
+        let (tempRoot, _, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let codexSkillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        let codexConfigURL = tempRoot.appendingPathComponent("codex-config.toml")
+        try FileManager.default.createDirectory(at: codexSkillsDir, withIntermediateDirectories: true)
+        let skillDir = try createSkillDirectory(named: "codex-skill", in: codexSkillsDir)
+        let disabledConfig = """
+        [[skills.config]]
+        path = "\(skillDir.appendingPathComponent("SKILL.md").path)"
+        enabled = false
+        """
+        try disabledConfig.write(to: codexConfigURL, atomically: true, encoding: .utf8)
+
+        let manager = makeSkillManager(
+            skillsDir: codexSkillsDir,
+            disabledDir: disabledDir,
+            appSupportDir: appSupportDir,
+            provider: .codex,
+            codexConfigURL: codexConfigURL
+        )
+        try await manager.loadSkills()
+
+        let skill = try #require(manager.skills.first { $0.name == "codex-skill" })
+        #expect(skill.isEnabled == false)
+
+        try await manager.enableSkill(skill)
+
+        let config = try String(contentsOf: codexConfigURL, encoding: .utf8)
+        #expect(!config.contains("codex-skill/SKILL.md"))
+        #expect(manager.skills.first { $0.name == "codex-skill" }?.isEnabled == true)
     }
 
     // MARK: - Delete Skill

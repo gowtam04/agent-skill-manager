@@ -30,14 +30,14 @@ Note: The test target is `AgentSkillManagerTests` but runs under the `AgentSkill
 Three-layer architecture with unidirectional data flow:
 
 ```
-Views → AppViewModel → SkillManager → { FileSystemManager, GitManager, SkillParser, MetadataStore }
-                                         ↕                    ↕
-                                    ~/.claude/skills/     git CLI (Process)
+Views → AppViewModel → { Claude SkillManager, Codex SkillManager }
+                             ↕                    ↕
+            { FileSystemManager, GitManager, SkillParser, MetadataStore, CodexConfigStore }
 ```
 
 - **Models** (`Sources/Models/`): `Skill` (core data type) and `SkillMetadata` (Codable struct for metadata.json entries). All `Sendable`.
-- **Services** (`Sources/Services/`): Business logic layer. `SkillManager` is the main orchestrator (`@MainActor @Observable`), coordinating `FileSystemManager` (directory scanning, copy/move/delete, symlink ops), `GitManager` (git clone/pull via `Process`), `SkillParser` (YAML frontmatter extraction), and `MetadataStore` (JSON persistence).
-- **ViewModels** (`Sources/ViewModels/`): Single `AppViewModel` (`@MainActor @Observable`) wrapping `SkillManager`, adding UI-specific state (search, selection, editor, sheet/alert flags).
+- **Services** (`Sources/Services/`): Business logic layer. `SkillManager` is the main orchestrator (`@MainActor @Observable`) for one provider, coordinating `FileSystemManager` (directory scanning, copy/move/delete, symlink ops), `GitManager` (git clone/pull via `Process`), `SkillParser` (YAML frontmatter extraction), `MetadataStore` (JSON persistence), and `CodexConfigStore` (Codex enable/disable overrides in `~/.codex/config.toml`).
+- **ViewModels** (`Sources/ViewModels/`): Single `AppViewModel` (`@MainActor @Observable`) wrapping both provider-specific managers, adding UI-specific state (provider switching, search, selection, editor, sheet/alert flags).
 - **Views** (`Sources/Views/`): SwiftUI views using `NavigationSplitView`. `ContentView` is the root container; `SidebarView`, `DetailPanelView`, `EditorView`, `AddSkillView` are composed within it.
 
 ## Key Conventions
@@ -54,10 +54,13 @@ The app manages skills across these directories:
 
 | Path | Purpose |
 |------|---------|
-| `~/.claude/skills/` | Active (enabled) skills |
-| `~/.claude/skills-disabled/` | Disabled skills |
+| `~/.claude/skills/` | Active Claude Code skills |
+| `~/.claude/skills-disabled/` | Disabled Claude Code skills |
+| `~/.agents/skills/` | Personal Codex skills |
+| `~/.codex/config.toml` | Codex skill enable/disable overrides via `[[skills.config]]` |
 | `~/Library/Application Support/Agent-Skill-Manager/repos/` | Cloned Git repos for URL-installed skills |
-| `~/Library/Application Support/Agent-Skill-Manager/metadata.json` | Install metadata (source URLs, timestamps) |
+| `~/Library/Application Support/Agent-Skill-Manager/metadata.json` | Claude install metadata (source URLs, timestamps) |
+| `~/Library/Application Support/Agent-Skill-Manager/codex-metadata.json` | Codex install metadata (source URLs, timestamps) |
 
 ## Requirements
 

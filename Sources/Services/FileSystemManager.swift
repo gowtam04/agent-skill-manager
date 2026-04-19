@@ -12,9 +12,9 @@ struct DiscoveredSkill: Sendable {
 struct FileSystemManager: Sendable {
 
     let skillsDirectoryURL: URL
-    let disabledDirectoryURL: URL
+    let disabledDirectoryURL: URL?
 
-    init(skillsDirectoryURL: URL, disabledDirectoryURL: URL) {
+    init(skillsDirectoryURL: URL, disabledDirectoryURL: URL? = nil) {
         self.skillsDirectoryURL = skillsDirectoryURL
         self.disabledDirectoryURL = disabledDirectoryURL
     }
@@ -29,7 +29,8 @@ struct FileSystemManager: Sendable {
             results.append(contentsOf: enabledSkills)
         }
 
-        if FileManager.default.fileExists(atPath: disabledDirectoryURL.path) {
+        if let disabledDirectoryURL,
+           FileManager.default.fileExists(atPath: disabledDirectoryURL.path) {
             let disabledSkills = try scanDirectory(disabledDirectoryURL, isEnabled: false)
             results.append(contentsOf: disabledSkills)
         }
@@ -129,8 +130,15 @@ struct FileSystemManager: Sendable {
 
     func skillExists(named name: String) -> Bool {
         let fm = FileManager.default
-        return fm.fileExists(atPath: skillsDirectoryURL.appendingPathComponent(name).path)
-            || fm.fileExists(atPath: disabledDirectoryURL.appendingPathComponent(name).path)
+        if fm.fileExists(atPath: skillsDirectoryURL.appendingPathComponent(name).path) {
+            return true
+        }
+
+        if let disabledDirectoryURL {
+            return fm.fileExists(atPath: disabledDirectoryURL.appendingPathComponent(name).path)
+        }
+
+        return false
     }
 
     // MARK: - Copy
@@ -138,6 +146,8 @@ struct FileSystemManager: Sendable {
     func copySkill(from sourceURL: URL, to name: String) throws {
         let fm = FileManager.default
         let destinationURL = skillsDirectoryURL.appendingPathComponent(name)
+
+        try ensureDirectoryExists(at: skillsDirectoryURL)
 
         // Remove existing if present
         if fm.fileExists(atPath: destinationURL.path) {

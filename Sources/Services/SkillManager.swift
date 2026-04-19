@@ -15,21 +15,27 @@ final class SkillManager {
     var skills: [Skill] = []
     var isLoading: Bool = false
 
+    let provider: SkillProvider
     private let fileSystemManager: FileSystemManager
     private let gitManager: GitManager
     private let skillParser: SkillParser.Type
     private let metadataStore: MetadataStore
+    private let codexConfigStore: CodexConfigStore?
 
     init(
+        provider: SkillProvider,
         fileSystemManager: FileSystemManager,
         gitManager: GitManager,
         skillParser: SkillParser.Type,
-        metadataStore: MetadataStore
+        metadataStore: MetadataStore,
+        codexConfigStore: CodexConfigStore? = nil
     ) {
+        self.provider = provider
         self.fileSystemManager = fileSystemManager
         self.gitManager = gitManager
         self.skillParser = skillParser
         self.metadataStore = metadataStore
+        self.codexConfigStore = codexConfigStore
     }
 
     // MARK: - Load Skills
@@ -40,13 +46,20 @@ final class SkillManager {
 
         let fm = FileManager.default
         let skillsDirExists = fm.fileExists(atPath: fileSystemManager.skillsDirectoryURL.path)
-        let disabledDirExists = fm.fileExists(atPath: fileSystemManager.disabledDirectoryURL.path)
-        if !skillsDirExists && !disabledDirExists {
-            throw SkillManagerError.skillsDirectoryNotFound
+        let disabledDirExists = fileSystemManager.disabledDirectoryURL.map { fm.fileExists(atPath: $0.path) } ?? false
+
+        if provider == .claudeCode && !skillsDirExists && !disabledDirExists {
+            throw SkillManagerError.skillsDirectoryNotFound(provider)
+        }
+
+        if provider == .codex && !skillsDirExists {
+            skills = []
+            return
         }
 
         let discovered = try fileSystemManager.scanSkills()
         let metadata = (try? metadataStore.load()) ?? [:]
+        let disabledCodexPaths = (try? codexConfigStore?.disabledSkillMDPaths()) ?? []
 
         var loadedSkills: [Skill] = []
 
@@ -67,15 +80,28 @@ final class SkillManager {
             }
 
             let sourceRepoURL = metadata[dirName]?.sourceRepoURL
+            let isEnabled: Bool
+            if provider == .codex {
+                let skillMDURLs = skillMDURLs(
+                    directoryURL: item.directoryURL,
+                    symlinkTarget: item.symlinkTarget
+                )
+                isEnabled = !skillMDURLs.contains { url in
+                    disabledCodexPaths.contains(url.standardizedFileURL.path)
+                }
+            } else {
+                isEnabled = item.isEnabled
+            }
 
             let skill = Skill(
                 id: UUID(),
+                provider: provider,
                 name: name,
                 description: description,
                 directoryURL: item.directoryURL,
                 isSymlink: item.isSymlink,
                 symlinkTarget: item.symlinkTarget,
-                isEnabled: item.isEnabled,
+                isEnabled: isEnabled,
                 sourceRepoURL: sourceRepoURL,
                 rawContent: rawContent,
                 fileTree: item.fileTree
@@ -96,6 +122,7 @@ final class SkillManager {
         }
 
         let dirName = sourceURL.lastPathComponent
+        try fileSystemManager.ensureDirectoryExists(at: fileSystemManager.skillsDirectoryURL)
         try fileSystemManager.copySkill(from: sourceURL, to: dirName)
 
         try await loadSkills()
@@ -129,32 +156,32 @@ final class SkillManager {
         let cloneDestination = reposDir.appendingPathComponent(repoName)
         try await gitManager.clone(repoURL: repoURL, to: cloneDestination)
 
-        // Find SKILL.md in the cloned repo
-        let fm = FileManager.default
-        let contents = try fm.contentsOfDirectory(
-            at: cloneDestination,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-
-        // Check root level for SKILL.md
-        let rootSkillMD = cloneDestination.appendingPathComponent("SKILL.md")
         var skillDirs: [URL] = []
+        let fm = FileManager.default
 
-        if fm.fileExists(atPath: rootSkillMD.path) {
-            skillDirs.append(cloneDestination)
-        }
+        if let enumerator = fm.enumerator(
+            at: cloneDestination,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [],
+            errorHandler: nil
+        ) {
+            while let itemURL = enumerator.nextObject() as? URL {
+                if itemURL.lastPathComponent == ".git" {
+                    enumerator.skipDescendants()
+                    continue
+                }
 
-        // Check subdirectories
-        for item in contents {
-            var isDir: ObjCBool = false
-            if fm.fileExists(atPath: item.path, isDirectory: &isDir), isDir.boolValue {
-                let subSkillMD = item.appendingPathComponent("SKILL.md")
-                if fm.fileExists(atPath: subSkillMD.path) {
-                    skillDirs.append(item)
+                if itemURL.lastPathComponent == "SKILL.md" {
+                    skillDirs.append(itemURL.deletingLastPathComponent())
                 }
             }
         }
+
+        skillDirs = Array(
+            Dictionary(
+                uniqueKeysWithValues: skillDirs.map { ($0.standardizedFileURL.path, $0.standardizedFileURL) }
+            ).values
+        ).sorted { $0.path < $1.path }
 
         guard !skillDirs.isEmpty else {
             throw SkillManagerError.noSkillMDInRepo
@@ -174,6 +201,8 @@ final class SkillManager {
 
     func commitStagedURLInstall(_ staged: StagedURLInstall) async throws {
         let fm = FileManager.default
+        try fileSystemManager.ensureDirectoryExists(at: fileSystemManager.skillsDirectoryURL)
+
         for (skillDir, skillName) in zip(staged.skillDirs, staged.skillNames) {
             let symlinkPath = fileSystemManager.skillsDirectoryURL.appendingPathComponent(skillName)
 
@@ -209,21 +238,41 @@ final class SkillManager {
     // MARK: - Enable / Disable
 
     func enableSkill(_ skill: Skill) async throws {
-        let dirName = skill.directoryURL.lastPathComponent
-        let destinationURL = fileSystemManager.skillsDirectoryURL.appendingPathComponent(dirName)
+        switch provider {
+        case .claudeCode:
+            let dirName = skill.directoryURL.lastPathComponent
+            let destinationURL = fileSystemManager.skillsDirectoryURL.appendingPathComponent(dirName)
 
-        try fileSystemManager.ensureDirectoryExists(at: fileSystemManager.skillsDirectoryURL)
-        try fileSystemManager.moveSkill(from: skill.directoryURL, to: destinationURL)
+            try fileSystemManager.ensureDirectoryExists(at: fileSystemManager.skillsDirectoryURL)
+            try fileSystemManager.moveSkill(from: skill.directoryURL, to: destinationURL)
+        case .codex:
+            try codexConfigStore?.enableSkill(
+                at: skill.skillMDURL,
+                alternateSkillMDURLs: alternateSkillMDURLs(for: skill)
+            )
+        }
 
         try await loadSkills()
     }
 
     func disableSkill(_ skill: Skill) async throws {
-        let dirName = skill.directoryURL.lastPathComponent
-        let destinationURL = fileSystemManager.disabledDirectoryURL.appendingPathComponent(dirName)
+        switch provider {
+        case .claudeCode:
+            guard let disabledDirectoryURL = fileSystemManager.disabledDirectoryURL else {
+                throw SkillManagerError.disabledDirectoryUnsupported(provider)
+            }
 
-        try fileSystemManager.ensureDirectoryExists(at: fileSystemManager.disabledDirectoryURL)
-        try fileSystemManager.moveSkill(from: skill.directoryURL, to: destinationURL)
+            let dirName = skill.directoryURL.lastPathComponent
+            let destinationURL = disabledDirectoryURL.appendingPathComponent(dirName)
+
+            try fileSystemManager.ensureDirectoryExists(at: disabledDirectoryURL)
+            try fileSystemManager.moveSkill(from: skill.directoryURL, to: destinationURL)
+        case .codex:
+            try codexConfigStore?.disableSkill(
+                at: skill.skillMDURL,
+                alternateSkillMDURLs: alternateSkillMDURLs(for: skill)
+            )
+        }
 
         try await loadSkills()
     }
@@ -231,20 +280,34 @@ final class SkillManager {
     // MARK: - Delete
 
     func deleteSkill(_ skill: Skill, removeSource: Bool) async throws {
-        if skill.isSymlink && removeSource, let target = skill.symlinkTarget {
+        let metadataKey = skill.directoryURL.lastPathComponent
+        let metadata = (try? metadataStore.load()) ?? [:]
+
+        if skill.isSymlink && removeSource {
             // Remove the symlink first
             try fileSystemManager.deleteSkill(at: skill.directoryURL)
-            // Then remove the source
-            try fileSystemManager.deleteSkill(at: target)
+            if let clonedRepoPath = metadata[metadataKey]?.clonedRepoPath {
+                let repoURL = URL(fileURLWithPath: clonedRepoPath)
+                if FileManager.default.fileExists(atPath: repoURL.path) {
+                    try fileSystemManager.deleteSkill(at: repoURL)
+                }
+            } else if let target = skill.symlinkTarget {
+                try fileSystemManager.deleteSkill(at: target)
+            }
         } else {
             try fileSystemManager.deleteSkill(at: skill.directoryURL)
         }
 
         // Clean up metadata entry for URL-installed skills (FR-8.3)
-        let dirName = skill.directoryURL.lastPathComponent
-        var metadata = (try? metadataStore.load()) ?? [:]
-        if metadata.removeValue(forKey: dirName) != nil {
-            try metadataStore.save(metadata)
+        var updatedMetadata = metadata
+        if updatedMetadata.removeValue(forKey: metadataKey) != nil {
+            try metadataStore.save(updatedMetadata)
+        }
+
+        if provider == .codex {
+            try codexConfigStore?.removeOverrides(
+                for: [skill.skillMDURL] + alternateSkillMDURLs(for: skill)
+            )
         }
 
         try await loadSkills()
@@ -253,7 +316,7 @@ final class SkillManager {
     // MARK: - Pull Latest
 
     func pullLatest(for skill: Skill) async throws -> String {
-        guard let sourceRepoURL = skill.sourceRepoURL else {
+        guard skill.sourceRepoURL != nil else {
             throw SkillManagerError.notURLInstalled
         }
 
@@ -299,7 +362,8 @@ enum SkillManagerError: Error, LocalizedError {
     case notURLInstalled
     case noMetadata
     case invalidURL
-    case skillsDirectoryNotFound
+    case skillsDirectoryNotFound(SkillProvider)
+    case disabledDirectoryUnsupported(SkillProvider)
 
     var errorDescription: String? {
         switch self {
@@ -313,8 +377,34 @@ enum SkillManagerError: Error, LocalizedError {
             return "No metadata found for this skill."
         case .invalidURL:
             return "Only HTTPS URLs are supported."
-        case .skillsDirectoryNotFound:
-            return "Skills directory not found. Please ensure ~/.claude/skills/ exists."
+        case .skillsDirectoryNotFound(let provider):
+            switch provider {
+            case .claudeCode:
+                return "Skills directory not found. Please ensure ~/.claude/skills/ exists."
+            case .codex:
+                return "Skills directory not found. Please ensure ~/.agents/skills/ exists."
+            }
+        case .disabledDirectoryUnsupported(let provider):
+            return "\(provider.displayName) does not use a disabled skills directory."
         }
+    }
+}
+
+private extension SkillManager {
+    func skillMDURLs(directoryURL: URL, symlinkTarget: URL?) -> [URL] {
+        var urls = [directoryURL.appendingPathComponent("SKILL.md")]
+        if let symlinkTarget {
+            urls.append(symlinkTarget.appendingPathComponent("SKILL.md"))
+        }
+        return Array(
+            Dictionary(uniqueKeysWithValues: urls.map { ($0.standardizedFileURL.path, $0.standardizedFileURL) }).values
+        )
+    }
+
+    func alternateSkillMDURLs(for skill: Skill) -> [URL] {
+        guard let symlinkTarget = skill.symlinkTarget else {
+            return []
+        }
+        return [symlinkTarget.appendingPathComponent("SKILL.md")]
     }
 }
