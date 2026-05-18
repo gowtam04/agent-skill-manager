@@ -37,15 +37,18 @@ struct DetailPanelView: View {
     }
 
     private var deleteAlertTitle: String {
-        let count = viewModel.selectedSkillIDs.count
+        let count = viewModel.selectedMutableSkills.count
         return count > 1 ? "Delete \(count) Skills" : "Delete Skill"
     }
 
     private var deleteAlertMessage: String {
-        let count = viewModel.selectedSkillIDs.count
+        let count = viewModel.selectedMutableSkills.count
         if count > 1 {
             if viewModel.selectionContainsSymlinks {
                 return "Some of these \(count) skills are symlinks. Choose how to remove them."
+            }
+            if viewModel.selectionContainsReadOnlySkills {
+                return "Delete these \(count) managed skills? Read-only skills in the selection will remain."
             }
             return "Delete these \(count) skills? This will permanently remove them and their files."
         }
@@ -142,6 +145,13 @@ struct DetailPanelView: View {
                             }
                         }
 
+                        GridRow {
+                            Text("Access:")
+                                .fontWeight(.semibold)
+                                .foregroundStyle(.secondary)
+                            Text(skill.isReadOnly ? "Read-only system" : "Managed")
+                        }
+
                         if let sourceURL = skill.sourceRepoURL {
                             GridRow {
                                 Text("Source:")
@@ -191,6 +201,7 @@ struct DetailPanelView: View {
                         Button("Edit") {
                             viewModel.startEditing()
                         }
+                        .disabled(skill.isReadOnly)
 
                         Button(skill.isEnabled ? "Disable" : "Enable") {
                             Task {
@@ -201,6 +212,7 @@ struct DetailPanelView: View {
                                 }
                             }
                         }
+                        .disabled(skill.isReadOnly)
 
                         if skill.sourceRepoURL != nil {
                             Button {
@@ -216,12 +228,13 @@ struct DetailPanelView: View {
                                     Text("Pull Latest")
                                 }
                             }
-                            .disabled(viewModel.isPulling)
+                            .disabled(viewModel.isPulling || skill.isReadOnly)
                         }
 
                         Button("Delete", role: .destructive) {
                             viewModel.isShowingDeleteConfirmation = true
                         }
+                        .disabled(skill.isReadOnly)
                     }
 
                     Spacer()
@@ -270,8 +283,10 @@ struct MultiSelectionSummaryView: View {
         let selected = viewModel.selectedSkills
         let enabledCount = selected.filter(\.isEnabled).count
         let disabledCount = selected.count - enabledCount
-        let anyEnabled = enabledCount > 0
-        let anyDisabled = disabledCount > 0
+        let mutableSelected = viewModel.selectedMutableSkills
+        let readOnlyCount = selected.count - mutableSelected.count
+        let anyEnabled = mutableSelected.contains(where: \.isEnabled)
+        let anyDisabled = mutableSelected.contains { !$0.isEnabled }
 
         VStack(alignment: .leading, spacing: 16) {
             Text("\(selected.count) skills selected")
@@ -281,6 +296,12 @@ struct MultiSelectionSummaryView: View {
             Text("\(enabledCount) enabled, \(disabledCount) disabled")
                 .font(.subheadline)
                 .foregroundStyle(.secondary)
+
+            if readOnlyCount > 0 {
+                Text("\(readOnlyCount) read-only")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
 
             Divider()
 
@@ -316,6 +337,7 @@ struct MultiSelectionSummaryView: View {
                 Button("Delete All", role: .destructive) {
                     viewModel.isShowingDeleteConfirmation = true
                 }
+                .disabled(mutableSelected.isEmpty)
             }
         }
         .padding()

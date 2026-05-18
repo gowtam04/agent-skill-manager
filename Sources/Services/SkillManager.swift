@@ -107,6 +107,7 @@ final class SkillManager {
                 isSymlink: item.isSymlink,
                 symlinkTarget: item.symlinkTarget,
                 isEnabled: isEnabled,
+                isReadOnly: item.isReadOnly,
                 sourceRepoURL: sourceRepoURL,
                 rawContent: rawContent,
                 fileTree: item.fileTree
@@ -243,6 +244,10 @@ final class SkillManager {
     // MARK: - Enable / Disable
 
     func enableSkill(_ skill: Skill) async throws {
+        guard !skill.isReadOnly else {
+            throw SkillManagerError.readOnlySkill
+        }
+
         switch provider {
         case .claudeCode:
             let dirName = skill.directoryURL.lastPathComponent
@@ -261,6 +266,10 @@ final class SkillManager {
     }
 
     func disableSkill(_ skill: Skill) async throws {
+        guard !skill.isReadOnly else {
+            throw SkillManagerError.readOnlySkill
+        }
+
         switch provider {
         case .claudeCode:
             guard let disabledDirectoryURL = fileSystemManager.disabledDirectoryURL else {
@@ -285,6 +294,10 @@ final class SkillManager {
     // MARK: - Delete
 
     func deleteSkill(_ skill: Skill, removeSource: Bool) async throws {
+        guard !skill.isReadOnly else {
+            throw SkillManagerError.readOnlySkill
+        }
+
         let metadataKey = skill.directoryURL.lastPathComponent
         let metadata = (try? metadataStore.load()) ?? [:]
         let matchingMetadata = matchingMetadata(for: skill, metadata: metadata)
@@ -322,6 +335,10 @@ final class SkillManager {
     // MARK: - Pull Latest
 
     func pullLatest(for skill: Skill) async throws -> String {
+        guard !skill.isReadOnly else {
+            throw SkillManagerError.readOnlySkill
+        }
+
         guard skill.sourceRepoURL != nil else {
             throw SkillManagerError.notURLInstalled
         }
@@ -356,6 +373,10 @@ final class SkillManager {
     }
 
     func saveSkillContent(_ skill: Skill, content: String) throws {
+        guard !skill.isReadOnly else {
+            throw SkillManagerError.readOnlySkill
+        }
+
         let skillMDURL = skill.directoryURL.appendingPathComponent("SKILL.md")
         try content.write(to: skillMDURL, atomically: true, encoding: .utf8)
     }
@@ -369,6 +390,7 @@ enum SkillManagerError: Error, LocalizedError {
     case invalidURL
     case skillsDirectoryNotFound(SkillProvider)
     case disabledDirectoryUnsupported(SkillProvider)
+    case readOnlySkill
 
     var errorDescription: String? {
         switch self {
@@ -391,6 +413,8 @@ enum SkillManagerError: Error, LocalizedError {
             }
         case .disabledDirectoryUnsupported(let provider):
             return "\(provider.displayName) does not use a disabled skills directory."
+        case .readOnlySkill:
+            return "System skills are read-only."
         }
     }
 }

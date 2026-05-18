@@ -17,6 +17,7 @@ struct SkillModelTests {
             isSymlink: false,
             symlinkTarget: nil,
             isEnabled: true,
+            isReadOnly: false,
             sourceRepoURL: nil,
             rawContent: "---\nname: my-skill\ndescription: A test skill\n---\nBody",
             fileTree: []
@@ -43,6 +44,7 @@ struct SkillModelTests {
             isSymlink: true,
             symlinkTarget: targetURL,
             isEnabled: false,
+            isReadOnly: false,
             sourceRepoURL: "https://github.com/user/repo",
             rawContent: "",
             fileTree: []
@@ -67,6 +69,7 @@ struct SkillModelTests {
             isSymlink: false,
             symlinkTarget: nil,
             isEnabled: true,
+            isReadOnly: false,
             sourceRepoURL: nil,
             rawContent: "",
             fileTree: []
@@ -80,6 +83,7 @@ struct SkillModelTests {
             isSymlink: false,
             symlinkTarget: nil,
             isEnabled: true,
+            isReadOnly: false,
             sourceRepoURL: nil,
             rawContent: "",
             fileTree: []
@@ -99,6 +103,7 @@ struct SkillModelTests {
             isSymlink: false,
             symlinkTarget: nil,
             isEnabled: true,
+            isReadOnly: false,
             sourceRepoURL: nil,
             rawContent: "",
             fileTree: []
@@ -118,6 +123,7 @@ struct SkillModelTests {
             isSymlink: false,
             symlinkTarget: nil,
             isEnabled: true,
+            isReadOnly: false,
             sourceRepoURL: nil,
             rawContent: "",
             fileTree: []

@@ -3,6 +3,7 @@ import Foundation
 struct DiscoveredSkill: Sendable {
     let directoryURL: URL
     let isEnabled: Bool
+    let isReadOnly: Bool
     let isSymlink: Bool
     let symlinkTarget: URL?
     let skillMDContent: String
@@ -14,15 +15,18 @@ struct FileSystemManager: Sendable {
     let skillsDirectoryURL: URL
     let disabledDirectoryURL: URL?
     let additionalSkillsDirectoryURLs: [URL]
+    let readOnlySkillsDirectoryURLs: [URL]
 
     init(
         skillsDirectoryURL: URL,
         disabledDirectoryURL: URL? = nil,
-        additionalSkillsDirectoryURLs: [URL] = []
+        additionalSkillsDirectoryURLs: [URL] = [],
+        readOnlySkillsDirectoryURLs: [URL] = []
     ) {
         self.skillsDirectoryURL = skillsDirectoryURL
         self.disabledDirectoryURL = disabledDirectoryURL
         self.additionalSkillsDirectoryURLs = additionalSkillsDirectoryURLs
+        self.readOnlySkillsDirectoryURLs = readOnlySkillsDirectoryURLs
     }
 
     // MARK: - Scanning
@@ -32,15 +36,22 @@ struct FileSystemManager: Sendable {
 
         for directoryURL in skillScanDirectoryURLs {
             if FileManager.default.fileExists(atPath: directoryURL.path) {
-                let enabledSkills = try scanDirectory(directoryURL, isEnabled: true)
+                let enabledSkills = try scanDirectory(directoryURL, isEnabled: true, isReadOnly: false)
                 results.append(contentsOf: enabledSkills)
             }
         }
 
         if let disabledDirectoryURL,
            FileManager.default.fileExists(atPath: disabledDirectoryURL.path) {
-            let disabledSkills = try scanDirectory(disabledDirectoryURL, isEnabled: false)
+            let disabledSkills = try scanDirectory(disabledDirectoryURL, isEnabled: false, isReadOnly: false)
             results.append(contentsOf: disabledSkills)
+        }
+
+        for directoryURL in readOnlySkillScanDirectoryURLs {
+            if FileManager.default.fileExists(atPath: directoryURL.path) {
+                let readOnlySkills = try scanDirectory(directoryURL, isEnabled: true, isReadOnly: true)
+                results.append(contentsOf: readOnlySkills)
+            }
         }
 
         return results
@@ -60,11 +71,19 @@ struct FileSystemManager: Sendable {
         return uniqueURLs
     }
 
-    var anySkillsDirectoryExists: Bool {
-        skillScanDirectoryURLs.contains { FileManager.default.fileExists(atPath: $0.path) }
+    var readOnlySkillScanDirectoryURLs: [URL] {
+        uniqueURLs(readOnlySkillsDirectoryURLs)
     }
 
-    private func scanDirectory(_ directoryURL: URL, isEnabled: Bool) throws -> [DiscoveredSkill] {
+    var allSkillScanDirectoryURLs: [URL] {
+        uniqueURLs(skillScanDirectoryURLs + readOnlySkillScanDirectoryURLs)
+    }
+
+    var anySkillsDirectoryExists: Bool {
+        allSkillScanDirectoryURLs.contains { FileManager.default.fileExists(atPath: $0.path) }
+    }
+
+    private func scanDirectory(_ directoryURL: URL, isEnabled: Bool, isReadOnly: Bool) throws -> [DiscoveredSkill] {
         let fm = FileManager.default
         let contents = try fm.contentsOfDirectory(
             at: directoryURL,
@@ -89,6 +108,7 @@ struct FileSystemManager: Sendable {
             results.append(DiscoveredSkill(
                 directoryURL: itemURL,
                 isEnabled: isEnabled,
+                isReadOnly: isReadOnly,
                 isSymlink: symlink,
                 symlinkTarget: target,
                 skillMDContent: content,
@@ -156,7 +176,7 @@ struct FileSystemManager: Sendable {
 
     func skillExists(named name: String) -> Bool {
         let fm = FileManager.default
-        for directoryURL in skillScanDirectoryURLs {
+        for directoryURL in allSkillScanDirectoryURLs {
             if fm.fileExists(atPath: directoryURL.appendingPathComponent(name).path) {
                 return true
             }
@@ -167,6 +187,19 @@ struct FileSystemManager: Sendable {
         }
 
         return false
+    }
+
+    private func uniqueURLs(_ urls: [URL]) -> [URL] {
+        var seenPaths: Set<String> = []
+        var uniqueURLs: [URL] = []
+
+        for url in urls {
+            let standardizedURL = url.standardizedFileURL
+            guard seenPaths.insert(standardizedURL.path).inserted else { continue }
+            uniqueURLs.append(standardizedURL)
+        }
+
+        return uniqueURLs
     }
 
     // MARK: - Copy

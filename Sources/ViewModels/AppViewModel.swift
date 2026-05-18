@@ -44,8 +44,14 @@ final class AppViewModel {
     var selectedSkills: [Skill] {
         skills.filter { selectedSkillIDs.contains($0.id) }
     }
+    var selectedMutableSkills: [Skill] {
+        selectedSkills.filter { !$0.isReadOnly }
+    }
     var selectionContainsSymlinks: Bool {
-        selectedSkills.contains(where: { $0.isSymlink })
+        selectedMutableSkills.contains(where: { $0.isSymlink })
+    }
+    var selectionContainsReadOnlySkills: Bool {
+        selectedSkills.contains(where: { $0.isReadOnly })
     }
     var searchText: String = "" {
         didSet {
@@ -331,6 +337,11 @@ final class AppViewModel {
 
     func enableSkill() async {
         guard let skill = selectedSkill else { return }
+        guard !skill.isReadOnly else {
+            errorMessage = SkillManagerError.readOnlySkill.localizedDescription
+            return
+        }
+
         let directoryName = skill.directoryURL.lastPathComponent
         do {
             try await activeSkillManager.enableSkill(skill)
@@ -347,6 +358,11 @@ final class AppViewModel {
 
     func disableSkill() async {
         guard let skill = selectedSkill else { return }
+        guard !skill.isReadOnly else {
+            errorMessage = SkillManagerError.readOnlySkill.localizedDescription
+            return
+        }
+
         let directoryName = skill.directoryURL.lastPathComponent
         do {
             try await activeSkillManager.disableSkill(skill)
@@ -362,7 +378,7 @@ final class AppViewModel {
     }
 
     func enableSelectedSkills() async {
-        let targets = selectedSkills.filter { !$0.isEnabled }
+        let targets = selectedSkills.filter { !$0.isEnabled && !$0.isReadOnly }
         guard !targets.isEmpty else { return }
         let trackedDirectoryNames = Set(selectedSkills.map { $0.directoryURL.lastPathComponent })
         var errors: [String] = []
@@ -389,7 +405,7 @@ final class AppViewModel {
     }
 
     func disableSelectedSkills() async {
-        let targets = selectedSkills.filter { $0.isEnabled }
+        let targets = selectedSkills.filter { $0.isEnabled && !$0.isReadOnly }
         guard !targets.isEmpty else { return }
         let trackedDirectoryNames = Set(selectedSkills.map { $0.directoryURL.lastPathComponent })
         var errors: [String] = []
@@ -419,6 +435,12 @@ final class AppViewModel {
 
     func deleteSkill(removeSource: Bool) async {
         guard let skill = selectedSkill else { return }
+        guard !skill.isReadOnly else {
+            errorMessage = SkillManagerError.readOnlySkill.localizedDescription
+            isShowingDeleteConfirmation = false
+            return
+        }
+
         do {
             try await activeSkillManager.deleteSkill(skill, removeSource: removeSource)
             selectedSkillIDs = []
@@ -438,8 +460,13 @@ final class AppViewModel {
     }
 
     func deleteSelectedSkills(removeSource: Bool) async {
-        let targets = selectedSkills
-        guard !targets.isEmpty else { return }
+        let targets = selectedMutableSkills
+        guard !targets.isEmpty else {
+            isShowingDeleteConfirmation = false
+            return
+        }
+
+        let remainingReadOnlyPaths = Set(selectedSkills.filter(\.isReadOnly).map { $0.directoryURL.path })
         var errors: [String] = []
         for skill in targets {
             do {
@@ -448,13 +475,17 @@ final class AppViewModel {
                 errors.append("\(skill.name): \(error.localizedDescription)")
             }
         }
-        selectedSkillIDs = []
         isShowingDeleteConfirmation = false
         do {
             try await refreshProvider(selectedProvider)
         } catch {
             errors.append(error.localizedDescription)
         }
+        selectedSkillIDs = Set(
+            skills
+                .filter { remainingReadOnlyPaths.contains($0.directoryURL.path) }
+                .map { $0.id }
+        )
         if !errors.isEmpty {
             errorMessage = errors.joined(separator: "\n")
         }
@@ -464,6 +495,11 @@ final class AppViewModel {
 
     func pullLatest() async {
         guard let skill = selectedSkill else { return }
+        guard !skill.isReadOnly else {
+            errorMessage = SkillManagerError.readOnlySkill.localizedDescription
+            return
+        }
+
         isPulling = true
         defer { isPulling = false }
         do {
@@ -492,6 +528,11 @@ final class AppViewModel {
     func startEditing() {
         editorMode = .edit
         guard let skill = selectedSkill else { return }
+        guard !skill.isReadOnly else {
+            errorMessage = SkillManagerError.readOnlySkill.localizedDescription
+            return
+        }
+
         do {
             let content = try activeSkillManager.readSkillContent(skill)
             editorContent = content
@@ -507,6 +548,11 @@ final class AppViewModel {
 
     func saveEditing() async {
         guard let skill = selectedSkill else { return }
+        guard !skill.isReadOnly else {
+            errorMessage = SkillManagerError.readOnlySkill.localizedDescription
+            return
+        }
+
         do {
             // Check for external modification
             let filePath = skill.directoryURL.appendingPathComponent("SKILL.md").path
@@ -528,6 +574,11 @@ final class AppViewModel {
 
     func forceSaveEditing() async {
         guard let skill = selectedSkill else { return }
+        guard !skill.isReadOnly else {
+            errorMessage = SkillManagerError.readOnlySkill.localizedDescription
+            return
+        }
+
         do {
             try activeSkillManager.saveSkillContent(skill, content: editorContent)
             editorMode = .edit

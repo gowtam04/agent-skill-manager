@@ -76,10 +76,14 @@ struct AppViewModelTests {
     private func makeCodexSkillManager(
         skillsDir: URL,
         appSupportDir: URL,
-        configFileURL: URL
+        configFileURL: URL,
+        additionalSkillsDirs: [URL] = [],
+        readOnlySkillsDirs: [URL] = []
     ) -> SkillManager {
         let fileSystemManager = FileSystemManager(
-            skillsDirectoryURL: skillsDir
+            skillsDirectoryURL: skillsDir,
+            additionalSkillsDirectoryURLs: additionalSkillsDirs,
+            readOnlySkillsDirectoryURLs: readOnlySkillsDirs
         )
         let metadataStore = MetadataStore(
             fileURL: appSupportDir.appendingPathComponent("codex-metadata.json")
@@ -530,6 +534,55 @@ struct AppViewModelTests {
             encoding: .utf8
         )
         #expect(fileContent.contains("Brand new content here."))
+    }
+
+    @Test("Read-only Codex skill cannot be edited, disabled, or deleted")
+    func readOnlyCodexSkillBlocksSingleSkillMutations() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let codexPrimaryDir = tempRoot.appendingPathComponent("agents-skills", isDirectory: true)
+        let codexSystemDir = tempRoot.appendingPathComponent("codex-skills/.system", isDirectory: true)
+        let codexSupportDir = tempRoot.appendingPathComponent("codex-app-support", isDirectory: true)
+        let codexConfigURL = tempRoot.appendingPathComponent("codex-config.toml")
+        try FileManager.default.createDirectory(at: codexPrimaryDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: codexSystemDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: codexSupportDir, withIntermediateDirectories: true)
+        let systemSkillDir = try createSkillDirectory(named: "system-skill", in: codexSystemDir)
+
+        let vm = AppViewModel(
+            claudeSkillManager: makeSkillManager(
+                skillsDir: skillsDir,
+                disabledDir: disabledDir,
+                appSupportDir: appSupportDir
+            ),
+            codexSkillManager: makeCodexSkillManager(
+                skillsDir: codexPrimaryDir,
+                appSupportDir: codexSupportDir,
+                configFileURL: codexConfigURL,
+                readOnlySkillsDirs: [codexSystemDir]
+            )
+        )
+        await vm.loadSkills()
+        vm.requestProviderSelection(.codex)
+
+        let systemSkill = try #require(vm.skills.first { $0.name == "system-skill" })
+        #expect(systemSkill.isReadOnly)
+        vm.selectSkill(systemSkill)
+
+        vm.startEditing()
+        #expect(!vm.isEditing)
+        #expect(vm.errorMessage == SkillManagerError.readOnlySkill.localizedDescription)
+
+        vm.errorMessage = nil
+        await vm.disableSkill()
+        #expect(vm.errorMessage == SkillManagerError.readOnlySkill.localizedDescription)
+        #expect(!FileManager.default.fileExists(atPath: codexConfigURL.path))
+
+        vm.errorMessage = nil
+        await vm.deleteSkill(removeSource: false)
+        #expect(vm.errorMessage == SkillManagerError.readOnlySkill.localizedDescription)
+        #expect(FileManager.default.fileExists(atPath: systemSkillDir.path))
     }
 
     @Test("Cancel editing discards changes and clears isEditing")
@@ -986,6 +1039,46 @@ struct AppViewModelTests {
         #expect(vm.skills.isEmpty)
         #expect(vm.selectedSkillIDs.isEmpty)
         #expect(!vm.isShowingDeleteConfirmation)
+    }
+
+    @Test("Bulk delete ignores read-only Codex skills")
+    func bulkDeleteIgnoresReadOnlyCodexSkills() async throws {
+        let (tempRoot, skillsDir, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let codexPrimaryDir = tempRoot.appendingPathComponent("agents-skills", isDirectory: true)
+        let codexSystemDir = tempRoot.appendingPathComponent("codex-skills/.system", isDirectory: true)
+        let codexSupportDir = tempRoot.appendingPathComponent("codex-app-support", isDirectory: true)
+        let codexConfigURL = tempRoot.appendingPathComponent("codex-config.toml")
+        try FileManager.default.createDirectory(at: codexPrimaryDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: codexSystemDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: codexSupportDir, withIntermediateDirectories: true)
+        try createSkillDirectory(named: "managed-skill", in: codexPrimaryDir)
+        let systemSkillDir = try createSkillDirectory(named: "system-skill", in: codexSystemDir)
+
+        let vm = AppViewModel(
+            claudeSkillManager: makeSkillManager(
+                skillsDir: skillsDir,
+                disabledDir: disabledDir,
+                appSupportDir: appSupportDir
+            ),
+            codexSkillManager: makeCodexSkillManager(
+                skillsDir: codexPrimaryDir,
+                appSupportDir: codexSupportDir,
+                configFileURL: codexConfigURL,
+                readOnlySkillsDirs: [codexSystemDir]
+            )
+        )
+        await vm.loadSkills()
+        vm.requestProviderSelection(.codex)
+
+        vm.setSelection(ids: Set(vm.skills.map { $0.id }))
+        await vm.deleteSelectedSkills(removeSource: false)
+
+        #expect(!FileManager.default.fileExists(atPath: codexPrimaryDir.appendingPathComponent("managed-skill").path))
+        #expect(FileManager.default.fileExists(atPath: systemSkillDir.path))
+        #expect(vm.skills.map(\.name) == ["system-skill"])
+        #expect(vm.selectedSkills.map(\.name) == ["system-skill"])
     }
 
     @Test("Bulk delete aggregates errors from failing targets and still removes the rest")

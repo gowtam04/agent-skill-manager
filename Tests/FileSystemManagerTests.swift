@@ -159,6 +159,34 @@ struct FileSystemManagerTests {
         #expect(results.count == 2)
         #expect(results.map(\.directoryURL.lastPathComponent).sorted() == ["agents-skill", "codex-skill"])
         #expect(results.allSatisfy { $0.isEnabled })
+        #expect(results.allSatisfy { !$0.isReadOnly })
+    }
+
+    @Test("Scan finds read-only skills in read-only directories")
+    func scanFindsReadOnlyDirectories() throws {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("FileSystemManagerTests-\(UUID().uuidString)", isDirectory: true)
+        let primarySkillsDir = tempRoot.appendingPathComponent("agents-skills", isDirectory: true)
+        let readOnlySkillsDir = tempRoot.appendingPathComponent("codex-skills/.system", isDirectory: true)
+        defer { cleanUp(tempRoot) }
+
+        try FileManager.default.createDirectory(at: primarySkillsDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: readOnlySkillsDir, withIntermediateDirectories: true)
+        try createSkillDirectory(named: "agents-skill", in: primarySkillsDir)
+        try createSkillDirectory(named: "system-skill", in: readOnlySkillsDir)
+
+        let manager = FileSystemManager(
+            skillsDirectoryURL: primarySkillsDir,
+            readOnlySkillsDirectoryURLs: [readOnlySkillsDir]
+        )
+        let results = try manager.scanSkills()
+
+        let agentsSkill = try #require(results.first { $0.directoryURL.lastPathComponent == "agents-skill" })
+        let systemSkill = try #require(results.first { $0.directoryURL.lastPathComponent == "system-skill" })
+        #expect(results.count == 2)
+        #expect(!agentsSkill.isReadOnly)
+        #expect(systemSkill.isReadOnly)
+        #expect(systemSkill.isEnabled)
     }
 
     @Test("Scan ignores directories without SKILL.md")

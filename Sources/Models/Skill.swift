@@ -9,6 +9,7 @@ struct Skill: Identifiable, Sendable {
     let isSymlink: Bool
     let symlinkTarget: URL?
     let isEnabled: Bool
+    let isReadOnly: Bool
     let sourceRepoURL: String?
     let rawContent: String
     let fileTree: [FileTreeNode]

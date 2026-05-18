@@ -95,12 +95,14 @@ struct SkillManagerTests {
         appSupportDir: URL,
         provider: SkillProvider = .claudeCode,
         codexConfigURL: URL? = nil,
-        additionalSkillsDirs: [URL] = []
+        additionalSkillsDirs: [URL] = [],
+        readOnlySkillsDirs: [URL] = []
     ) -> SkillManager {
         let fileSystemManager = FileSystemManager(
             skillsDirectoryURL: skillsDir,
             disabledDirectoryURL: provider == .claudeCode ? disabledDir : nil,
-            additionalSkillsDirectoryURLs: additionalSkillsDirs
+            additionalSkillsDirectoryURLs: additionalSkillsDirs,
+            readOnlySkillsDirectoryURLs: readOnlySkillsDirs
         )
         let metadataStore = MetadataStore(
             fileURL: appSupportDir.appendingPathComponent(
@@ -260,6 +262,37 @@ struct SkillManagerTests {
         #expect(skill.sourceRepoURL == nil)
     }
 
+    @Test("Codex loads primary, user, and read-only system skills")
+    func codexLoadsPrimaryUserAndReadOnlySystemSkills() async throws {
+        let (tempRoot, _, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let primaryCodexDir = tempRoot.appendingPathComponent("agents-skills", isDirectory: true)
+        let additionalCodexDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        let systemCodexDir = additionalCodexDir.appendingPathComponent(".system", isDirectory: true)
+        try FileManager.default.createDirectory(at: primaryCodexDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: additionalCodexDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: systemCodexDir, withIntermediateDirectories: true)
+        try createSkillDirectory(named: "agents-skill", in: primaryCodexDir)
+        try createSkillDirectory(named: "codex-user-skill", in: additionalCodexDir)
+        try createSkillDirectory(named: "system-skill", in: systemCodexDir)
+
+        let manager = makeSkillManager(
+            skillsDir: primaryCodexDir,
+            disabledDir: disabledDir,
+            appSupportDir: appSupportDir,
+            provider: .codex,
+            additionalSkillsDirs: [additionalCodexDir],
+            readOnlySkillsDirs: [systemCodexDir]
+        )
+        try await manager.loadSkills()
+
+        #expect(manager.skills.map(\.name).sorted() == ["agents-skill", "codex-user-skill", "system-skill"])
+        #expect(manager.skills.first { $0.name == "agents-skill" }?.isReadOnly == false)
+        #expect(manager.skills.first { $0.name == "codex-user-skill" }?.isReadOnly == false)
+        #expect(manager.skills.first { $0.name == "system-skill" }?.isReadOnly == true)
+    }
+
     // MARK: - Add Skill from File
 
     @Test("Add skill from file copies to skills directory")
@@ -349,6 +382,59 @@ struct SkillManagerTests {
         )
 
         #expect(manager.findDuplicateNames(for: [importCandidate]) == ["duplicate-skill"])
+    }
+
+    @Test("Codex duplicate detection checks read-only directories")
+    func codexDuplicateDetectionChecksReadOnlyDirectories() async throws {
+        let (tempRoot, _, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let primaryCodexDir = tempRoot.appendingPathComponent("agents-skills", isDirectory: true)
+        let systemCodexDir = tempRoot.appendingPathComponent("codex-skills/.system", isDirectory: true)
+        let externalDir = tempRoot.appendingPathComponent("external", isDirectory: true)
+        try FileManager.default.createDirectory(at: primaryCodexDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: systemCodexDir, withIntermediateDirectories: true)
+        try createSkillDirectory(named: "system-skill", in: systemCodexDir)
+        let importCandidate = try createSkillDirectory(named: "system-skill", in: externalDir)
+
+        let manager = makeSkillManager(
+            skillsDir: primaryCodexDir,
+            disabledDir: disabledDir,
+            appSupportDir: appSupportDir,
+            provider: .codex,
+            readOnlySkillsDirs: [systemCodexDir]
+        )
+
+        #expect(manager.findDuplicateNames(for: [importCandidate]) == ["system-skill"])
+    }
+
+    @Test("Codex imports write to primary directory when additional and read-only directories exist")
+    func codexImportsWriteToPrimaryDirectory() async throws {
+        let (tempRoot, _, disabledDir, appSupportDir) = try makeTempEnvironment()
+        defer { cleanUp(tempRoot) }
+
+        let primaryCodexDir = tempRoot.appendingPathComponent("agents-skills", isDirectory: true)
+        let additionalCodexDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
+        let systemCodexDir = additionalCodexDir.appendingPathComponent(".system", isDirectory: true)
+        let externalDir = tempRoot.appendingPathComponent("external", isDirectory: true)
+        try FileManager.default.createDirectory(at: primaryCodexDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: additionalCodexDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: systemCodexDir, withIntermediateDirectories: true)
+        let importCandidate = try createSkillDirectory(named: "new-codex-skill", in: externalDir)
+
+        let manager = makeSkillManager(
+            skillsDir: primaryCodexDir,
+            disabledDir: disabledDir,
+            appSupportDir: appSupportDir,
+            provider: .codex,
+            additionalSkillsDirs: [additionalCodexDir],
+            readOnlySkillsDirs: [systemCodexDir]
+        )
+        try await manager.addSkillFromFile(sourceURL: importCandidate)
+
+        #expect(FileManager.default.fileExists(atPath: primaryCodexDir.appendingPathComponent("new-codex-skill/SKILL.md").path))
+        #expect(!FileManager.default.fileExists(atPath: additionalCodexDir.appendingPathComponent("new-codex-skill/SKILL.md").path))
+        #expect(!FileManager.default.fileExists(atPath: systemCodexDir.appendingPathComponent("new-codex-skill/SKILL.md").path))
     }
 
     // MARK: - Enable / Disable Skill
