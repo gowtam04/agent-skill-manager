@@ -35,8 +35,7 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: ai.gowtam.agent-skill-manager
         PRODUCT_NAME: "Agent Skill Manager"
         PRODUCT_MODULE_NAME: AgentSkillManager
-        INFOPLIST_GENERATION_MODE: GeneratedByXcode
-        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Sources/Info.plist
         SWIFT_STRICT_CONCURRENCY: complete
     scheme:
       testTargets:
