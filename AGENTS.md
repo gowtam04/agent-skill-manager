@@ -56,9 +56,12 @@ The app manages skills across these directories:
 |------|---------|
 | `~/.claude/skills/` | Active Claude Code skills |
 | `~/.claude/skills-disabled/` | Disabled Claude Code skills |
-| `~/.agents/skills/` | Primary personal Codex skills and import/install target |
+| `~/.agents/skills/` | Shared / cross-tool skills (universal Agent Skills standard) |
+| `~/.agents/skills-disabled/` | Disabled shared skills (filesystem move) |
 | `~/.codex/skills/` | Additional personal Codex skills discovered by the app |
 | `~/.codex/config.toml` | Codex skill enable/disable overrides via `[[skills.config]]` |
+| `~/.grok/skills/` | Active Grok Build skills |
+| `~/.grok/config.toml` | Grok skill enable/disable overrides via `[[skills.config]]` |
 | `~/Library/Application Support/Agent-Skill-Manager/repos/` | Cloned Git repos for URL-installed skills |
 | `~/Library/Application Support/Agent-Skill-Manager/metadata.json` | Claude install metadata (source URLs, timestamps) |
 | `~/Library/Application Support/Agent-Skill-Manager/codex-metadata.json` | Codex install metadata (source URLs, timestamps) |

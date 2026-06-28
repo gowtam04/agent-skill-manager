@@ -95,19 +95,27 @@ struct SkillManagerTests {
         appSupportDir: URL,
         provider: SkillProvider = .claudeCode,
         codexConfigURL: URL? = nil,
+        grokConfigURL: URL? = nil,
         additionalSkillsDirs: [URL] = [],
         readOnlySkillsDirs: [URL] = []
     ) -> SkillManager {
+        let usesDisabledDir = provider == .claudeCode || provider == .shared
+        let metadataFileName: String
+        switch provider {
+        case .claudeCode: metadataFileName = "metadata.json"
+        case .codex:      metadataFileName = "codex-metadata.json"
+        case .grok:       metadataFileName = "grok-metadata.json"
+        case .shared:     metadataFileName = "shared-metadata.json"
+        }
+
         let fileSystemManager = FileSystemManager(
             skillsDirectoryURL: skillsDir,
-            disabledDirectoryURL: provider == .claudeCode ? disabledDir : nil,
+            disabledDirectoryURL: usesDisabledDir ? disabledDir : nil,
             additionalSkillsDirectoryURLs: additionalSkillsDirs,
             readOnlySkillsDirectoryURLs: readOnlySkillsDirs
         )
         let metadataStore = MetadataStore(
-            fileURL: appSupportDir.appendingPathComponent(
-                provider == .claudeCode ? "metadata.json" : "codex-metadata.json"
-            )
+            fileURL: appSupportDir.appendingPathComponent(metadataFileName)
         )
         return SkillManager(
             provider: provider,
@@ -115,7 +123,8 @@ struct SkillManagerTests {
             gitManager: GitManager(),
             skillParser: SkillParser.self,
             metadataStore: metadataStore,
-            codexConfigStore: codexConfigURL.map(CodexConfigStore.init(fileURL:))
+            codexConfigStore: codexConfigURL.map(CodexConfigStore.init(fileURL:)),
+            grokConfigStore: grokConfigURL.map(GrokConfigStore.init(fileURL:))
         )
     }
 

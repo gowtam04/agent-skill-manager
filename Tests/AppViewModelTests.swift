@@ -98,6 +98,44 @@ struct AppViewModelTests {
         )
     }
 
+    /// Minimal Grok manager for tests that don't exercise Grok-specific behavior.
+    private func makeMinimalGrokManager(tempRoot: URL) -> SkillManager {
+        let grokSkillsDir = tempRoot.appendingPathComponent("grok-skills-min", isDirectory: true)
+        let grokSupportDir = tempRoot.appendingPathComponent("grok-support-min", isDirectory: true)
+        let grokConfigURL = tempRoot.appendingPathComponent("grok-min.toml")
+        try? FileManager.default.createDirectory(at: grokSkillsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: grokSupportDir, withIntermediateDirectories: true)
+        let fs = FileSystemManager(skillsDirectoryURL: grokSkillsDir)
+        let meta = MetadataStore(fileURL: grokSupportDir.appendingPathComponent("grok-metadata.json"))
+        return SkillManager(
+            provider: .grok,
+            fileSystemManager: fs,
+            gitManager: GitManager(),
+            skillParser: SkillParser.self,
+            metadataStore: meta,
+            grokConfigStore: GrokConfigStore(fileURL: grokConfigURL)
+        )
+    }
+
+    /// Minimal Shared manager (Claude-style disabled dir) for tests that don't exercise Shared behavior.
+    private func makeMinimalSharedManager(tempRoot: URL) -> SkillManager {
+        let sharedSkillsDir = tempRoot.appendingPathComponent("shared-skills-min", isDirectory: true)
+        let sharedDisabledDir = tempRoot.appendingPathComponent("shared-disabled-min", isDirectory: true)
+        let sharedSupportDir = tempRoot.appendingPathComponent("shared-support-min", isDirectory: true)
+        try? FileManager.default.createDirectory(at: sharedSkillsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: sharedDisabledDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: sharedSupportDir, withIntermediateDirectories: true)
+        let fs = FileSystemManager(skillsDirectoryURL: sharedSkillsDir, disabledDirectoryURL: sharedDisabledDir)
+        let meta = MetadataStore(fileURL: sharedSupportDir.appendingPathComponent("shared-metadata.json"))
+        return SkillManager(
+            provider: .shared,
+            fileSystemManager: fs,
+            gitManager: GitManager(),
+            skillParser: SkillParser.self,
+            metadataStore: meta
+        )
+    }
+
     private func makeViewModel(
         skillsDir: URL,
         disabledDir: URL,
@@ -111,6 +149,8 @@ struct AppViewModelTests {
             appSupportDir: appSupportDir
         )
         let tempRoot = appSupportDir.deletingLastPathComponent()
+
+        // Codex (unchanged pattern)
         let codexSkillsDir = tempRoot.appendingPathComponent("codex-skills", isDirectory: true)
         let codexAppSupportDir = tempRoot.appendingPathComponent("codex-app-support", isDirectory: true)
         let codexConfigURL = tempRoot.appendingPathComponent("codex-config.toml")
@@ -121,9 +161,49 @@ struct AppViewModelTests {
             appSupportDir: codexAppSupportDir,
             configFileURL: codexConfigURL
         )
+
+        // Grok (minimal fixture)
+        let grokSkillsDir = tempRoot.appendingPathComponent("grok-skills", isDirectory: true)
+        let grokAppSupportDir = tempRoot.appendingPathComponent("grok-app-support", isDirectory: true)
+        let grokConfigURL = tempRoot.appendingPathComponent("grok-config.toml")
+        try? FileManager.default.createDirectory(at: grokSkillsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: grokAppSupportDir, withIntermediateDirectories: true)
+        let grokFileSystemManager = FileSystemManager(skillsDirectoryURL: grokSkillsDir)
+        let grokMetadataStore = MetadataStore(fileURL: grokAppSupportDir.appendingPathComponent("grok-metadata.json"))
+        let grokSkillManager = SkillManager(
+            provider: .grok,
+            fileSystemManager: grokFileSystemManager,
+            gitManager: GitManager(),
+            skillParser: SkillParser.self,
+            metadataStore: grokMetadataStore,
+            grokConfigStore: GrokConfigStore(fileURL: grokConfigURL)
+        )
+
+        // Shared (Claude-style with disabled dir)
+        let sharedSkillsDir = tempRoot.appendingPathComponent("shared-skills", isDirectory: true)
+        let sharedDisabledDir = tempRoot.appendingPathComponent("shared-skills-disabled", isDirectory: true)
+        let sharedAppSupportDir = tempRoot.appendingPathComponent("shared-app-support", isDirectory: true)
+        try? FileManager.default.createDirectory(at: sharedSkillsDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: sharedDisabledDir, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(at: sharedAppSupportDir, withIntermediateDirectories: true)
+        let sharedFileSystemManager = FileSystemManager(
+            skillsDirectoryURL: sharedSkillsDir,
+            disabledDirectoryURL: sharedDisabledDir
+        )
+        let sharedMetadataStore = MetadataStore(fileURL: sharedAppSupportDir.appendingPathComponent("shared-metadata.json"))
+        let sharedSkillManager = SkillManager(
+            provider: .shared,
+            fileSystemManager: sharedFileSystemManager,
+            gitManager: GitManager(),
+            skillParser: SkillParser.self,
+            metadataStore: sharedMetadataStore
+        )
+
         return AppViewModel(
             claudeSkillManager: claudeSkillManager,
-            codexSkillManager: codexSkillManager
+            codexSkillManager: codexSkillManager,
+            grokSkillManager: grokSkillManager,
+            sharedSkillManager: sharedSkillManager
         )
     }
 
@@ -561,7 +641,9 @@ struct AppViewModelTests {
                 appSupportDir: codexSupportDir,
                 configFileURL: codexConfigURL,
                 readOnlySkillsDirs: [codexSystemDir]
-            )
+            ),
+            grokSkillManager: makeMinimalGrokManager(tempRoot: tempRoot),
+            sharedSkillManager: makeMinimalSharedManager(tempRoot: tempRoot)
         )
         await vm.loadSkills()
         vm.requestProviderSelection(.codex)
@@ -1067,7 +1149,9 @@ struct AppViewModelTests {
                 appSupportDir: codexSupportDir,
                 configFileURL: codexConfigURL,
                 readOnlySkillsDirs: [codexSystemDir]
-            )
+            ),
+            grokSkillManager: makeMinimalGrokManager(tempRoot: tempRoot),
+            sharedSkillManager: makeMinimalSharedManager(tempRoot: tempRoot)
         )
         await vm.loadSkills()
         vm.requestProviderSelection(.codex)

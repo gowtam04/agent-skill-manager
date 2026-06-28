@@ -21,6 +21,7 @@ final class SkillManager {
     private let skillParser: SkillParser.Type
     private let metadataStore: MetadataStore
     private let codexConfigStore: CodexConfigStore?
+    private let grokConfigStore: GrokConfigStore?
 
     init(
         provider: SkillProvider,
@@ -28,7 +29,8 @@ final class SkillManager {
         gitManager: GitManager,
         skillParser: SkillParser.Type,
         metadataStore: MetadataStore,
-        codexConfigStore: CodexConfigStore? = nil
+        codexConfigStore: CodexConfigStore? = nil,
+        grokConfigStore: GrokConfigStore? = nil
     ) {
         self.provider = provider
         self.fileSystemManager = fileSystemManager
@@ -36,6 +38,7 @@ final class SkillManager {
         self.skillParser = skillParser
         self.metadataStore = metadataStore
         self.codexConfigStore = codexConfigStore
+        self.grokConfigStore = grokConfigStore
     }
 
     // MARK: - Load Skills
@@ -52,7 +55,7 @@ final class SkillManager {
             throw SkillManagerError.skillsDirectoryNotFound(provider)
         }
 
-        if provider == .codex && !fileSystemManager.anySkillsDirectoryExists {
+        if (provider == .codex || provider == .grok) && !fileSystemManager.anySkillsDirectoryExists {
             skills = []
             return
         }
@@ -60,6 +63,7 @@ final class SkillManager {
         let discovered = try fileSystemManager.scanSkills()
         let metadata = (try? metadataStore.load()) ?? [:]
         let disabledCodexPaths = (try? codexConfigStore?.disabledSkillMDPaths()) ?? []
+        let disabledGrokPaths = (try? grokConfigStore?.disabledSkillMDPaths()) ?? []
 
         var loadedSkills: [Skill] = []
 
@@ -93,6 +97,14 @@ final class SkillManager {
                 )
                 isEnabled = !skillMDURLs.contains { url in
                     disabledCodexPaths.contains(url.standardizedFileURL.path)
+                }
+            } else if provider == .grok {
+                let skillMDURLs = skillMDURLs(
+                    directoryURL: item.directoryURL,
+                    symlinkTarget: item.symlinkTarget
+                )
+                isEnabled = !skillMDURLs.contains { url in
+                    disabledGrokPaths.contains(url.standardizedFileURL.path)
                 }
             } else {
                 isEnabled = item.isEnabled
@@ -249,7 +261,7 @@ final class SkillManager {
         }
 
         switch provider {
-        case .claudeCode:
+        case .claudeCode, .shared:
             let dirName = skill.directoryURL.lastPathComponent
             let destinationURL = fileSystemManager.skillsDirectoryURL.appendingPathComponent(dirName)
 
@@ -257,6 +269,11 @@ final class SkillManager {
             try fileSystemManager.moveSkill(from: skill.directoryURL, to: destinationURL)
         case .codex:
             try codexConfigStore?.enableSkill(
+                at: skill.skillMDURL,
+                alternateSkillMDURLs: alternateSkillMDURLs(for: skill)
+            )
+        case .grok:
+            try grokConfigStore?.enableSkill(
                 at: skill.skillMDURL,
                 alternateSkillMDURLs: alternateSkillMDURLs(for: skill)
             )
@@ -271,7 +288,7 @@ final class SkillManager {
         }
 
         switch provider {
-        case .claudeCode:
+        case .claudeCode, .shared:
             guard let disabledDirectoryURL = fileSystemManager.disabledDirectoryURL else {
                 throw SkillManagerError.disabledDirectoryUnsupported(provider)
             }
@@ -283,6 +300,11 @@ final class SkillManager {
             try fileSystemManager.moveSkill(from: skill.directoryURL, to: destinationURL)
         case .codex:
             try codexConfigStore?.disableSkill(
+                at: skill.skillMDURL,
+                alternateSkillMDURLs: alternateSkillMDURLs(for: skill)
+            )
+        case .grok:
+            try grokConfigStore?.disableSkill(
                 at: skill.skillMDURL,
                 alternateSkillMDURLs: alternateSkillMDURLs(for: skill)
             )
@@ -325,6 +347,10 @@ final class SkillManager {
 
         if provider == .codex {
             try codexConfigStore?.removeOverrides(
+                for: [skill.skillMDURL] + alternateSkillMDURLs(for: skill)
+            )
+        } else if provider == .grok {
+            try grokConfigStore?.removeOverrides(
                 for: [skill.skillMDURL] + alternateSkillMDURLs(for: skill)
             )
         }
@@ -409,7 +435,11 @@ enum SkillManagerError: Error, LocalizedError {
             case .claudeCode:
                 return "Skills directory not found. Please ensure ~/.claude/skills/ exists."
             case .codex:
-                return "Skills directory not found. Please ensure ~/.agents/skills/ or ~/.codex/skills/ exists."
+                return "Skills directory not found. Please ensure ~/.codex/skills/ exists."
+            case .grok:
+                return "Skills directory not found. Please ensure ~/.grok/skills/ exists."
+            case .shared:
+                return "Skills directory not found. Please ensure ~/.agents/skills/ exists."
             }
         case .disabledDirectoryUnsupported(let provider):
             return "\(provider.displayName) does not use a disabled skills directory."

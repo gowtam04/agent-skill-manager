@@ -46,7 +46,9 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 1. On launch and on every app-focus event (`.onReceive(NotificationCenter...scenePhase)`), the app scans the selected provider's user-level skill locations.
 2. For Claude Code, each subdirectory containing a `SKILL.md` file under `~/.claude/skills/` is treated as a skill.
 3. The app also scans `~/.claude/skills-disabled/` to discover disabled Claude Code skills.
-4. For Codex, each direct child directory containing a `SKILL.md` file under `~/.agents/skills/` or `~/.codex/skills/` is treated as a personal skill.
+4. For Codex, each direct child directory containing a `SKILL.md` file under `~/.codex/skills/` (or the read-only `~/.codex/skills/.system/` subtree) is treated as a personal skill.
+5. For Grok, each direct child directory containing a `SKILL.md` file under `~/.grok/skills/` is treated as a personal skill.
+6. For Shared skills (the universal cross-tool standard), each direct child directory containing a `SKILL.md` file under `~/.agents/skills/` is treated as a shared skill; the app also scans `~/.agents/skills-disabled/` for disabled shared skills.
 5. For each skill, the app parses the SKILL.md YAML frontmatter to extract:
    - `name` (string, required)
    - `description` (string, required)
@@ -55,7 +57,7 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 
 ### FR-2: Sidebar
 
-1. The left sidebar displays a segmented provider switcher (`Claude Code`, `Codex`) above a scrollable list of the selected provider's discovered skills.
+1. The left sidebar displays a segmented provider switcher (`Claude Code`, `Codex`, `Grok`, `Shared`) above a scrollable list of the selected provider's discovered skills.
 2. Each entry shows:
    - Skill name (from frontmatter)
    - Truncated description (first ~80 characters, single line)
@@ -87,9 +89,11 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
    - A directory containing a `SKILL.md` file, or
    - A `SKILL.md` file directly (the app uses its parent directory)
 4. Validation: the app checks that a valid `SKILL.md` exists with parseable frontmatter (`name` and `description` fields).
-5. If valid, the app **copies** the entire skill directory into the active provider's managed directory:
+5. If valid, the app **copies** the entire skill directory into the active provider's managed (primary) directory:
    - Claude Code: `~/.claude/skills/{skill-name}/`
-   - Codex: `~/.agents/skills/{skill-name}/`
+   - Codex: `~/.codex/skills/{skill-name}/`
+   - Grok: `~/.grok/skills/{skill-name}/`
+   - Shared: `~/.agents/skills/{skill-name}/`
 6. If a skill with the same name already exists, the app shows a confirmation dialog: overwrite or cancel.
 7. The sidebar refreshes to show the newly added skill.
 
@@ -164,7 +168,12 @@ Agent Skill Manager is a native macOS desktop application for managing Claude Co
 
 ### NFR-3: Data Safety
 
-- The app never modifies files outside of `~/.claude/skills/`, `~/.claude/skills-disabled/`, `~/.agents/skills/`, `~/.codex/skills/`, `~/.codex/config.toml`, and `~/Library/Application Support/Agent-Skill-Manager/` — except when the user explicitly chooses "Remove link and source" for a symlinked skill.
+- The app never modifies files outside of the following directories and files (plus the app's own support folder) — except when the user explicitly chooses "Remove link and source" for a symlinked skill:
+  - `~/.claude/skills/`, `~/.claude/skills-disabled/`
+  - `~/.codex/skills/`, `~/.codex/skills/.system/`, `~/.codex/config.toml`
+  - `~/.grok/skills/`, `~/.grok/config.toml`
+  - `~/.agents/skills/`, `~/.agents/skills-disabled/`
+  - `~/Library/Application Support/Agent-Skill-Manager/` (metadata + cloned repos)
 - All destructive operations (delete, overwrite) require user confirmation.
 - The editor warns before overwriting externally-modified files.
 
@@ -275,12 +284,18 @@ Stored at provider-specific paths:
 |------|---------|
 | `~/.claude/skills/` | Active Claude Code skills |
 | `~/.claude/skills-disabled/` | Disabled Claude Code skills |
-| `~/.agents/skills/` | Primary personal Codex skills and import/install target |
-| `~/.codex/skills/` | Additional personal Codex skills discovered by the app |
-| `~/.codex/config.toml` | Codex enable/disable overrides |
+| `~/.codex/skills/` | Active Codex skills (primary for Codex tab) |
+| `~/.codex/skills/.system/` | Read-only system skills shipped with Codex |
+| `~/.codex/config.toml` | Codex enable/disable overrides via `[[skills.config]]` |
+| `~/.grok/skills/` | Active Grok Build skills (primary for Grok tab) |
+| `~/.grok/config.toml` | Grok enable/disable overrides via `[[skills.config]]` |
+| `~/.agents/skills/` | Shared / cross-tool skills (universal Agent Skills standard) |
+| `~/.agents/skills-disabled/` | Disabled shared skills (filesystem move, Claude-style) |
 | `~/Library/Application Support/Agent-Skill-Manager/repos/` | Cloned Git repos for URL-installed skills |
 | `~/Library/Application Support/Agent-Skill-Manager/metadata.json` | Claude install metadata |
 | `~/Library/Application Support/Agent-Skill-Manager/codex-metadata.json` | Codex install metadata |
+| `~/Library/Application Support/Agent-Skill-Manager/grok-metadata.json` | Grok install metadata |
+| `~/Library/Application Support/Agent-Skill-Manager/shared-metadata.json` | Shared install metadata |
 
 ### Concurrency Model
 

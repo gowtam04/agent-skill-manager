@@ -106,15 +106,24 @@ final class AppViewModel {
 
     private let claudeSkillManager: SkillManager
     private let codexSkillManager: SkillManager
+    private let grokSkillManager: SkillManager
+    private let sharedSkillManager: SkillManager
     private var skillsByProvider: [SkillProvider: [Skill]] = [:]
     private var selectedSkillPathsByProvider: [SkillProvider: Set<String>] = [:]
     private var searchTextByProvider: [SkillProvider: String] = [:]
 
     // MARK: - Init
 
-    init(claudeSkillManager: SkillManager, codexSkillManager: SkillManager) {
+    init(
+        claudeSkillManager: SkillManager,
+        codexSkillManager: SkillManager,
+        grokSkillManager: SkillManager,
+        sharedSkillManager: SkillManager
+    ) {
         self.claudeSkillManager = claudeSkillManager
         self.codexSkillManager = codexSkillManager
+        self.grokSkillManager = grokSkillManager
+        self.sharedSkillManager = sharedSkillManager
 
         let savedProvider = UserDefaults.standard.string(forKey: Self.selectedProviderDefaultsKey)
         self.selectedProvider = SkillProvider(rawValue: savedProvider ?? "") ?? .claudeCode
@@ -137,6 +146,8 @@ final class AppViewModel {
 
         await loadSkills(for: .claudeCode)
         await loadSkills(for: .codex)
+        await loadSkills(for: .grok)
+        await loadSkills(for: .shared)
         restoreState(for: selectedProvider)
     }
 
@@ -675,6 +686,10 @@ final class AppViewModel {
             return claudeSkillManager
         case .codex:
             return codexSkillManager
+        case .grok:
+            return grokSkillManager
+        case .shared:
+            return sharedSkillManager
         }
     }
 
